@@ -1,4 +1,4 @@
-<!-- LIWM:BEGIN v0.2.0 compact -->
+<!-- LIWM:BEGIN v0.3.0 compact -->
 LIWM is installed. Run `{{LIWM_COMMAND}} context --json` before non-trivial work
 and apply only the preferences it returns; the current instruction always wins.
 Persist learning only via `{{LIWM_COMMAND}} observe`/`feedback`, only from what

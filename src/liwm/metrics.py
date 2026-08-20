@@ -19,7 +19,7 @@ from .prediction import brier, calibration_bins, log_loss
 
 __all__ = ["ROLLING_WINDOW", "compute_metrics", "MetricsStore", "improvement_trend"]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 #: How many recent outcomes dominate the rolling figures.
 ROLLING_WINDOW = 50

@@ -49,7 +49,7 @@ def _validate(dist):
     entry_name = next((name for name in names if name.endswith(".dist-info/entry_points.txt")), None)
     metadata = wheel_files.get(metadata_name, b"").decode("utf-8")
     entries = wheel_files.get(entry_name, b"").decode("utf-8")
-    for value in ("Name: liwm", "Version: 0.2.0", "Requires-Python: >=3.9"):
+    for value in ("Name: liwm", "Version: 0.3.0", "Requires-Python: >=3.9"):
         if value not in metadata:
             raise SystemExit("wheel metadata missing %r" % value)
     if "liwm = liwm.cli:main" not in entries:

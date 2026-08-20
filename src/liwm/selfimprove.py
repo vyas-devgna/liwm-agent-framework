@@ -38,7 +38,7 @@ __all__ = [
     "SelfImprovementStore",
 ]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 CANDIDATE_STATES = (
     "proposed",

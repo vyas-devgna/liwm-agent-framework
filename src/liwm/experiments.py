@@ -41,7 +41,7 @@ from .jsonio import FileLock, read_json_resilient, utc_now, write_json_atomic
 
 __all__ = ["EXPERIMENT_MODES", "ExperimentStore"]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 #: ``exposure`` records whether a human saw candidate output.  It is the field
 #: the promotion gate reads, and the reason shadow evidence cannot masquerade

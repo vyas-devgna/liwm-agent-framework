@@ -3,7 +3,7 @@ name: liwm-profile-maintenance
 description: Keep the profile healthy - resolve contradictions, retire stale beliefs, handle "that's not true about me", verify integrity, recover from corruption.
 license: MIT
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   framework: liwm
 ---
 

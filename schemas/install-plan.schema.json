@@ -3,41 +3,131 @@
   "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/install-plan.schema.json",
   "title": "LIWM installation plan",
   "type": "object",
-  "required": ["schema_version", "plan_id", "operation", "host", "home", "steps"],
+  "required": [
+    "schema_version",
+    "plan_id",
+    "operation",
+    "host",
+    "home",
+    "steps"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": "0.2.0" },
-    "plan_id": { "type": "string", "pattern": "^plan_[0-9a-f]{24}$" },
-    "operation": { "enum": ["install", "uninstall"] },
-    "host": { "type": "string", "minLength": 1 },
-    "home": { "type": "string", "minLength": 1 },
-    "skills_source": { "type": ["string", "null"] },
+    "schema_version": {
+      "enum": [
+        "0.2.0",
+        "0.3.0"
+      ]
+    },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^plan_[0-9a-f]{24}$"
+    },
+    "operation": {
+      "enum": [
+        "install",
+        "uninstall"
+      ]
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "home": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skills_source": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["kind", "target", "precondition", "result"],
+        "required": [
+          "kind",
+          "target",
+          "precondition",
+          "result"
+        ],
         "additionalProperties": false,
         "properties": {
-          "kind": { "enum": ["bootstrap-upsert", "bootstrap-remove", "copy", "restore", "delete"] },
-          "target": { "type": "string", "minLength": 1 },
-          "source": { "type": "string", "minLength": 1 },
-          "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "block": { "type": "string" },
-          "backup": { "type": ["string", "null"] },
-          "precondition": { "$ref": "#/$defs/fileState" },
-          "original": { "$ref": "#/$defs/fileState" },
-          "result": { "$ref": "#/$defs/fileState" }
+          "kind": {
+            "enum": [
+              "bootstrap-upsert",
+              "bootstrap-remove",
+              "copy",
+              "restore",
+              "delete"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "block": {
+            "type": "string"
+          },
+          "backup": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "precondition": {
+            "$ref": "#/$defs/fileState"
+          },
+          "original": {
+            "$ref": "#/$defs/fileState"
+          },
+          "result": {
+            "$ref": "#/$defs/fileState"
+          }
         },
         "allOf": [
           {
-            "if": { "properties": { "kind": { "const": "bootstrap-upsert" } } },
-            "then": { "required": ["block"] }
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "bootstrap-upsert"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "block"
+              ]
+            }
           },
           {
-            "if": { "properties": { "kind": { "enum": ["copy", "restore"] } } },
-            "then": { "required": ["source", "source_sha256"] }
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "copy",
+                    "restore"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "source",
+                "source_sha256"
+              ]
+            }
           }
         ]
       }
@@ -48,17 +138,35 @@
       "oneOf": [
         {
           "type": "object",
-          "required": ["exists", "sha256"],
+          "required": [
+            "exists",
+            "sha256"
+          ],
           "additionalProperties": false,
-          "properties": { "exists": { "const": false }, "sha256": { "type": "null" } }
+          "properties": {
+            "exists": {
+              "const": false
+            },
+            "sha256": {
+              "type": "null"
+            }
+          }
         },
         {
           "type": "object",
-          "required": ["exists", "sha256"],
+          "required": [
+            "exists",
+            "sha256"
+          ],
           "additionalProperties": false,
           "properties": {
-            "exists": { "const": true },
-            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            "exists": {
+              "const": true
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
           }
         }
       ]

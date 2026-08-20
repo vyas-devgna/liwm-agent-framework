@@ -13,7 +13,12 @@ from .hosts import get_host, instruction_file_for, skills_dir_for
 from .integration import remove_bootstrap, upsert_bootstrap
 from .jsonio import FileLock, canonical_json, read_json, write_json_atomic
 
-PLAN_SCHEMA_VERSION = "0.2.0"
+PLAN_SCHEMA_VERSION = "0.3.0"
+
+#: Plan versions this build can still read.  A receipt written by an earlier
+#: release is the only record of what that release changed, so refusing to read
+#: it would strand the user with an installation they can no longer remove.
+SUPPORTED_PLAN_VERSIONS = ("0.2.0", "0.3.0")
 
 #: One incomplete installation at a time, per home.  The journal is written and
 #: fsynced *before* the first mutation and removed only after the last one, so
@@ -231,7 +236,8 @@ def load_plan(path):
 
 
 def _validate_plan(plan):
-    if not isinstance(plan, dict) or plan.get("schema_version") != PLAN_SCHEMA_VERSION:
+    if (not isinstance(plan, dict)
+            or plan.get("schema_version") not in SUPPORTED_PLAN_VERSIONS):
         raise InstallationError("unsupported installation plan")
     if plan.get("plan_id") != _plan_id(plan):
         raise InstallationError("installation plan hash does not match its contents")

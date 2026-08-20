@@ -36,7 +36,7 @@ __all__ = [
     "validate_project_id",
 ]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 ORIGINS = ("USER_SAID", "AGENT_INFERRED", "AGENT_DERIVED")
 

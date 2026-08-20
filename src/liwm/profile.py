@@ -53,7 +53,7 @@ __all__ = [
     "empty_profile",
 ]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 #: Dotted-dimension namespaces that get their own named section in user.json.
 PROFILE_SECTIONS = (
