@@ -28,8 +28,8 @@ Quick start (CLI)::
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
-__schema_version__ = "0.1.0"
+__version__ = "0.2.0"
+__schema_version__ = "0.2.0"
 __all__ = [
     "__version__",
     "__schema_version__",
@@ -37,10 +37,12 @@ __all__ = [
     "open_home",
     "ProfileStore",
     "EventStore",
+    "IntentGraphStore",
     "ProjectStore",
 ]
 
 from .events import EventStore  # noqa: E402
+from .intent_graph import IntentGraphStore  # noqa: E402
 from .paths import ensure_layout, liwm_home  # noqa: E402
 from .profile import ProfileStore  # noqa: E402
 from .projects import ProjectStore  # noqa: E402
@@ -60,6 +62,9 @@ class Liwm:
 
     def project(self, project_id):
         return ProjectStore(self.home, project_id)
+
+    def intent_graph(self):
+        return IntentGraphStore(self.home)
 
     def metrics(self):
         from .metrics import MetricsStore

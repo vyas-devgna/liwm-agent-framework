@@ -40,6 +40,7 @@ __all__ = [
     "prune_backups",
     "quarantine_corrupt",
     "read_json_resilient",
+    "lifecycle_lock_path",
 ]
 
 
@@ -410,3 +411,8 @@ def read_json_resilient(path, backups_dir=None, logs_dir=None, default=None):
                     write_json_atomic(p, data)
                     return data, note + " | restored from backup %s" % cand.name
     return default, note + " | no usable backup"
+def lifecycle_lock_path(home):
+    """Lock outside a resettable/deletable LIWM root."""
+    root = Path(home).expanduser().absolute()
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+    return root.parent / (".%s-%s.liwm.lock" % (root.name, digest))

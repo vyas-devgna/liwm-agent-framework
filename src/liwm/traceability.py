@@ -57,18 +57,23 @@ def explain_belief(store, belief_id=None, dimension=None, value=None):
         return None
 
     refs = set(belief.get("evidence_refs", []))
+    suppressed_refs = set(belief.get("suppressed_evidence_refs", []))
     supporting, opposing, ignored = [], [], []
     for event in store.events.iter_events(include_quarantined=True):
         obs = event.get("observation") or {}
-        if obs.get("dimension") != belief["dimension"]:
-            continue
         summary = _event_summary(event)
-        if event.get("quarantined"):
+        if event.get("event_id") in suppressed_refs:
             ignored.append(summary)
-        elif str(obs.get("value")) != str(belief["value"]):
-            opposing.append(summary)
-        else:
+        elif event.get("event_id") in refs:
             (supporting if obs.get("polarity", "support") == "support" else opposing).append(summary)
+        elif event.get("quarantined") and obs.get("dimension") == belief["dimension"]:
+            scope = obs.get("scope", "global")
+            scope_key = obs.get("scope_key") or (
+                event.get("project_id") if scope == "project" else
+                event.get("domain") if scope == "domain" else None
+            )
+            if scope == belief["scope"] and scope_key == belief.get("scope_key"):
+                ignored.append(summary)
 
     return {
         "belief": {
@@ -146,7 +151,10 @@ def explain_decision(store, decision_id, project_id=None):
                     item = _find_intent_item(intent, ref)
                     basis.append({"type": "intent", "ref": ref, "detail": item or "not found"})
                 elif str(ref).startswith("evt_"):
-                    basis.append({"type": "event", "ref": ref})
+                    event = next((e for e in store.events.iter_events(include_quarantined=True)
+                                  if e.get("event_id") == ref), None)
+                    basis.append({"type": "event", "ref": ref,
+                                  "detail": _event_summary(event) if event else "not found"})
                 else:
                     basis.append({"type": "other", "ref": ref})
             feedback = [f for f in ps.load_feedback().get("feedback", [])
@@ -158,9 +166,12 @@ def explain_decision(store, decision_id, project_id=None):
                 "feedback": feedback,
                 "outcome": entry.get("outcome"),
                 "completeness": (
-                    "fully traced" if entry.get("basis") else
+                    "fully traced" if entry.get("basis")
+                    and all(row.get("detail") != "not found" for row in basis) else
                     "no basis was recorded at decision time; this explanation is therefore "
-                    "incomplete rather than reconstructed"
+                    "incomplete rather than reconstructed" if not entry.get("basis") else
+                    "some recorded basis references could not be resolved; this explanation "
+                    "is incomplete rather than reconstructed"
                 ),
             }
     return None

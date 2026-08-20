@@ -15,11 +15,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .jsonio import FileLock, backup_file, read_json_resilient, utc_now, write_json_atomic
+from .jsonio import (
+    FileLock, backup_file, lifecycle_lock_path, read_json_resilient, utc_now,
+    write_json_atomic,
+)
 
 __all__ = ["DEFAULT_STRATEGY", "BOUNDS", "StrategyStore", "update_from_events"]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 #: Starting point for a brand-new profile: neutral, mildly conservative.
 DEFAULT_STRATEGY = {
@@ -106,45 +109,49 @@ class StrategyStore:
         return data
 
     def save(self, strategy):
-        with FileLock(self.lock_path):
-            backup_file(self.path, self.backups, tag="strategy")
-            strategy = dict(strategy)
-            strategy["revision"] = int(strategy.get("revision", 0)) + 1
-            strategy["updated_at"] = utc_now()
-            write_json_atomic(self.path, strategy)
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                return self._save_locked(strategy)
+
+    def _save_locked(self, strategy):
+        backup_file(self.path, self.backups, tag="strategy")
+        strategy = dict(strategy)
+        strategy["revision"] = int(strategy.get("revision", 0)) + 1
+        strategy["updated_at"] = utc_now()
+        write_json_atomic(self.path, strategy)
         return strategy
 
     def apply(self, adjustments, reason=None, store=None):
         """Apply bounded adjustments and record why."""
-        strategy = self.load()
-        applied = {}
-        for key, target in (adjustments or {}).items():
-            if key == "style_effectiveness":
-                for style, t in (target or {}).items():
-                    cur = float(strategy["style_effectiveness"].get(style, 1.0))
-                    new = _ewma(cur, float(t))
-                    new = max(STYLE_BOUNDS[0], min(STYLE_BOUNDS[1], new))
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                strategy = self.load()
+                applied = {}
+                for key, target in (adjustments or {}).items():
+                    if key == "style_effectiveness":
+                        for style, t in (target or {}).items():
+                            cur = float(strategy["style_effectiveness"].get(style, 1.0))
+                            new = max(STYLE_BOUNDS[0], min(STYLE_BOUNDS[1], _ewma(cur, float(t))))
+                            if abs(new - cur) > 1e-6:
+                                strategy["style_effectiveness"][style] = round(new, 4)
+                                applied["style_effectiveness.%s" % style] = [round(cur, 4), round(new, 4)]
+                        continue
+                    if key not in BOUNDS:
+                        continue
+                    cur = float(strategy.get(key, DEFAULT_STRATEGY.get(key, 0.5)))
+                    new = _clamp(key, _ewma(cur, float(target)))
                     if abs(new - cur) > 1e-6:
-                        strategy["style_effectiveness"][style] = round(new, 4)
-                        applied["style_effectiveness.%s" % style] = [round(cur, 4), round(new, 4)]
-                continue
-            if key not in BOUNDS:
-                continue
-            cur = float(strategy.get(key, DEFAULT_STRATEGY.get(key, 0.5)))
-            new = _clamp(key, _ewma(cur, float(target)))
-            if abs(new - cur) > 1e-6:
-                strategy[key] = round(new, 4)
-                applied[key] = [round(cur, 4), round(new, 4)]
+                        strategy[key] = round(new, 4)
+                        applied[key] = [round(cur, 4), round(new, 4)]
 
-        # Keep the creative/technical split coherent.
-        strategy["technical_question_weight"] = round(
-            _clamp("technical_question_weight", 1.0 - strategy["creative_question_weight"]), 4
-        )
-        strategy["observations"] = int(strategy.get("observations", 0)) + 1
-        if applied:
-            note = {"at": utc_now(), "reason": reason, "changes": applied}
-            strategy["notes"] = ([note] + list(strategy.get("notes", [])))[:40]
-        strategy = self.save(strategy)
+                strategy["technical_question_weight"] = round(
+                    _clamp("technical_question_weight", 1.0 - strategy["creative_question_weight"]), 4
+                )
+                strategy["observations"] = int(strategy.get("observations", 0)) + 1
+                if applied:
+                    note = {"at": utc_now(), "reason": reason, "changes": applied}
+                    strategy["notes"] = ([note] + list(strategy.get("notes", [])))[:40]
+                strategy = self._save_locked(strategy)
         if store is not None and applied:
             store.events.record(
                 "strategy_update", "agent_inference",

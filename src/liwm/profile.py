@@ -33,6 +33,7 @@ from .jsonio import (
     utc_now,
     utc_now_ms,
     write_json_atomic,
+    lifecycle_lock_path,
 )
 from .privacy import screen_dimension
 from .scope import (
@@ -51,7 +52,7 @@ __all__ = [
     "empty_profile",
 ]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 #: Dotted-dimension namespaces that get their own named section in user.json.
 PROFILE_SECTIONS = (
@@ -242,12 +243,25 @@ class ProfileStore:
             return profile
 
     # -- the fold ----------------------------------------------------------
-    def fold(self, as_of=None, include_promotions=True):
+    def fold(self, as_of=None, include_promotions=True, _events_locked=False):
         """Derive a complete profile from the event log.
 
         Deterministic: same events in, same profile out.  ``as_of`` folds the
         log up to a timestamp, which is how rollback and replay work.
         """
+        if not _events_locked:
+            with FileLock(lifecycle_lock_path(self.home), timeout=30.0):
+                with FileLock(self.events.lock_path, timeout=30.0):
+                    return self.fold(
+                        as_of=as_of, include_promotions=include_promotions,
+                        _events_locked=True,
+                    )
+        integrity = self.events.verify(_events_locked=True)
+        if not integrity["ok"]:
+            raise ValueError(
+                "event integrity failed; refusing to materialise around missing or corrupt "
+                "evidence (%d problem(s))" % len(integrity["problems"])
+            )
         base = None
         if self.path.is_file():
             base, _ = read_json_resilient(self.path, backups_dir=self.backups, logs_dir=self.logs)
@@ -285,16 +299,39 @@ class ProfileStore:
         skipped_by_branch = 0
         if branch_marker:
             marker_ts = branch_marker.get("ts", "")
+            marker_sequence = int(branch_marker.get("sequence") or 0)
             if branch_marker.get("kind") == "rollback":
                 cutoff = (branch_marker.get("payload") or {}).get("cutoff", "")
+                cutoff_sequence = (branch_marker.get("payload") or {}).get("cutoff_sequence")
+                if cutoff_sequence is None:
+                    cutoff_sequence = max(
+                        (int(event.get("sequence") or 0) for event in events
+                         if int(event.get("sequence") or 0) < marker_sequence
+                         and event.get("ts", "") <= cutoff),
+                        default=0,
+                    )
                 active = lambda event: (  # noqa: E731 - the predicate is clearer inline
-                    event.get("ts", "") <= cutoff or event.get("ts", "") >= marker_ts
+                    int(event.get("sequence") or 0) <= int(cutoff_sequence)
+                    or int(event.get("sequence") or 0) >= marker_sequence
                 )
             else:
-                cutoff = None
-                active = lambda event: event.get("ts", "") >= marker_ts  # noqa: E731
+                cutoff = cutoff_sequence = None
+                active = lambda event: int(event.get("sequence") or 0) >= marker_sequence  # noqa: E731
             skipped_by_branch = sum(1 for event in events if not active(event))
             events = [event for event in events if active(event)]
+
+        expanded = []
+        for event in events:
+            expanded.append(event)
+            if event.get("kind") != "onboarding_answer":
+                continue
+            for observation in (event.get("payload") or {}).get("observations", []):
+                observation = dict(
+                    observation, ts=event.get("ts"), provenance="onboarding_answer",
+                    session_id=event.get("session_id"), derived_from=[],
+                )
+                expanded.append(dict(event, kind="observation", observation=observation))
+        events = expanded
 
         for event in events:
             ts = event.get("ts", "")
@@ -402,6 +439,7 @@ class ProfileStore:
             # same instant; the fold already walks events in order, so "has a
             # rejection been seen yet" is exact and free.
             obs = dict(obs)
+            obs["_event_id"] = event.get("event_id")
             rejection_key = (scope, scope_key, dimension, _norm(obs.get("value")))
             obs["_post_rejection"] = (
                 rejection_key in rejections or rejection_key[:3] + ("*",) in rejections
@@ -418,7 +456,7 @@ class ProfileStore:
                     "decay_policy": obs.get("decay_policy", "standard"),
                     "first_seen": ts,
                     "last_seen": ts,
-                    "session_ids": [],
+                    "session_ids": set(),
                     "event_ids": [],
                     "notes": obs.get("note"),
                 },
@@ -426,8 +464,8 @@ class ProfileStore:
             m = meta[key]
             m["first_seen"] = min(m["first_seen"], ts)
             m["last_seen"] = max(m["last_seen"], ts)
-            if event.get("session_id") and event["session_id"] not in m["session_ids"]:
-                m["session_ids"].append(event["session_id"])
+            if event.get("session_id"):
+                m["session_ids"].add(event["session_id"])
             m["event_ids"].append(event.get("event_id"))
 
         # -- build beliefs -------------------------------------------------
@@ -455,6 +493,7 @@ class ProfileStore:
                 suppressed = len(obs_list) - len(usable)
 
             scored = ev.combine(usable)
+            usable_object_ids = {id(observation) for observation in usable}
             belief = {
                 "id": "blf_%s" % sha256_of(key)[:16],
                 "key": key,
@@ -473,8 +512,13 @@ class ProfileStore:
                 "source_types": sorted({o.get("source_type", "agent_inference") for o in usable}),
                 "provenance_types": sorted({o.get("provenance", "other") for o in usable}),
                 "decay_policy": m["decay_policy"],
-                "session_ids": m["session_ids"],
-                "evidence_refs": m["event_ids"][-25:],
+                "session_ids": sorted(m["session_ids"])[-100:],
+                "session_count": len(m["session_ids"]),
+                "evidence_refs": [o.get("_event_id") for o in usable if o.get("_event_id")][-25:],
+                "suppressed_evidence_refs": [
+                    o.get("_event_id") for o in obs_list
+                    if id(o) not in usable_object_ids and o.get("_event_id")
+                ][-25:],
                 "origin": "observed",
                 "status": "active",
                 "rejected_by_user": bool(rejection and not usable),
@@ -499,6 +543,7 @@ class ProfileStore:
         if include_promotions:
             promotions = evaluate_promotions(beliefs, policy=self.policy)
             existing_keys = {b["key"] for b in beliefs}
+            beliefs_by_id = {b["id"]: b for b in beliefs}
             for prop in promotions:
                 key = belief_key(
                     prop["target_scope"], prop["scope_key"], prop["dimension"], prop["value"]
@@ -531,7 +576,10 @@ class ProfileStore:
                         "provenance_types": ["derived"],
                         "decay_policy": "standard",
                         "session_ids": [],
-                        "evidence_refs": [],
+                        "evidence_refs": sorted({
+                            ref for source_id in prop["promoted_from"]
+                            for ref in beliefs_by_id.get(source_id, {}).get("evidence_refs", [])
+                        })[-25:],
                         "origin": "promoted",
                         "promoted_from": prop["promoted_from"],
                         "promotion_reason": prop["reason"],
@@ -565,6 +613,7 @@ class ProfileStore:
             "quarantined_event_count": quarantined,
             "last_event_id": (last_event or {}).get("event_id"),
             "last_event_ts": (last_event or {}).get("ts"),
+            "last_event_sequence": (last_event or {}).get("sequence"),
             "fold_hash": sha256_of(beliefs),
             "as_of": as_of,
             "folded_at": utc_now_ms(),
@@ -575,6 +624,7 @@ class ProfileStore:
                     "kind": branch_marker.get("kind"),
                     "marker_ts": branch_marker.get("ts"),
                     "cutoff": (branch_marker.get("payload") or {}).get("cutoff"),
+                    "cutoff_sequence": cutoff_sequence,
                 }
                 if branch_marker else None
             ),
@@ -613,7 +663,12 @@ class ProfileStore:
 
     # -- convenience -------------------------------------------------------
     def observe(self, dimension, value, source_type, provenance, **kwargs):
-        """Record one observation event and re-fold.  The main learning entry point."""
+        """Record an explicitly labelled observation; retained for imports.
+
+        New callers should use the intention-specific methods below so a
+        high-trust provenance/source pair is selected by code rather than
+        supplied as two freely combinable strings.
+        """
         scope = kwargs.pop("scope", "global")
         scope_key = kwargs.pop("scope_key", None)
         polarity = kwargs.pop("polarity", "support")
@@ -636,6 +691,35 @@ class ProfileStore:
         )
         profile = self.rebuild(reason="observation")
         return event, profile
+
+    def observe_user(self, dimension, value, source_type="explicit_statement", **kwargs):
+        allowed = {"explicit_statement", "explicit_correction", "explicit_rejection",
+                   "comparative_choice", "repeated_selection"}
+        if source_type not in allowed:
+            raise ValueError("user observation source must be one of: %s" % ", ".join(sorted(allowed)))
+        return self.observe(dimension, value, source_type, "direct_user_message", **kwargs)
+
+    def observe_edit(self, dimension, value, **kwargs):
+        return self.observe(dimension, value, "direct_edit", "direct_user_edit", **kwargs)
+
+    def observe_review(self, dimension, value, source_type="explicit_correction", **kwargs):
+        allowed = {"explicit_statement", "explicit_correction", "explicit_rejection",
+                   "comparative_choice", "repeated_selection"}
+        if source_type not in allowed:
+            raise ValueError("review observation source must be one of: %s" % ", ".join(sorted(allowed)))
+        return self.observe(dimension, value, source_type, "explicit_user_review", **kwargs)
+
+    def observe_inference(self, dimension, value, source_type="agent_inference", **kwargs):
+        allowed = {"agent_inference", "single_behavioral", "repeated_behavioral", "outcome_signal"}
+        if source_type not in allowed:
+            raise ValueError("inference source must be one of: %s" % ", ".join(sorted(allowed)))
+        return self.observe(dimension, value, source_type, "agent_inference", **kwargs)
+
+    def observe_untrusted(self, dimension, value, provenance, source_type="agent_inference", **kwargs):
+        from .evidence import PROVENANCE_TRUST
+        if provenance not in PROVENANCE_TRUST or PROVENANCE_TRUST[provenance] > 0.0:
+            raise ValueError("observe_untrusted requires a zero-trust provenance")
+        return self.observe(dimension, value, source_type, provenance, **kwargs)
 
     def reject(self, dimension, value=None, reason=None, inference_source=None,
                session_id=None, scope="global", scope_key=None):

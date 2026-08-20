@@ -21,11 +21,16 @@ from __future__ import annotations
 import os
 import re
 import uuid
+import gzip
+import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .evidence import PROVENANCE_TRUST, TRUSTED_PROVENANCE
 from .jsonio import (
+    FileLock,
+    lifecycle_lock_path,
     read_json,
     sha256_of,
     utc_now_ms,
@@ -41,7 +46,7 @@ __all__ = [
     "SCHEMA_VERSION",
 ]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 #: Every event kind LIWM knows how to fold.  Unknown kinds are stored and
 #: ignored by the folder, which keeps forward compatibility cheap.
@@ -66,6 +71,9 @@ EVENT_KINDS = frozenset(
         "decision",
         # project intent
         "project_intent_update",
+        # intent state graph
+        "intent_node",
+        "intent_edge",
         # learning machinery
         "scope_promotion",
         "scope_demotion",
@@ -95,6 +103,10 @@ DIRECT_USER_CONTROL_KINDS = frozenset(
 DIRECT_USER_PROVENANCE = frozenset(
     {"direct_user_message", "direct_user_edit", "explicit_user_review"}
 )
+HIGH_TRUST_SOURCES = frozenset({
+    "explicit_statement", "explicit_correction", "explicit_rejection",
+    "direct_edit", "repeated_selection", "comparative_choice", "onboarding_answer",
+})
 _EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{8,}$")
 
 
@@ -168,8 +180,9 @@ def make_event(
                     "refused_kind": kind,
                     "category": exc.category,
                     "reason": "privacy_gate",
-                    "detail": redact(exc.detail),
-                    "dimension_redacted": redact(str(obs.get("dimension"))),
+                    # Never retain the rejected dimension/value, even when the
+                    # user explicitly enabled general free-text storage.
+                    "location": "observation",
                 },
                 "quarantined": True,
                 "quarantine_reason": "privacy_gate:%s" % exc.category,
@@ -218,11 +231,160 @@ class EventStore:
     def __init__(self, home):
         self.home = Path(home)
         self.root = self.home / "events"
+        self.manifest_path = self.home / "events-manifest.json"
+        self.lock_path = self.home / ".events.lock"
+        self.transaction_path = self.home / "events-transaction.json"
+        self.archive_root = self.home / "archives"
+        self.archive_index_path = self.archive_root / "index.json"
+
+    def _archive_index(self):
+        index = read_json(self.archive_index_path, default=None)
+        if index is None:
+            return {"schema_version": SCHEMA_VERSION, "archives": []}
+        if not isinstance(index, dict):
+            raise ValueError("archive index must be an object")
+        integrity = index.get("integrity") or {}
+        body = {k: v for k, v in index.items() if k != "integrity"}
+        if integrity.get("hash") != sha256_of(body):
+            raise ValueError("archive index integrity mismatch")
+        return index
+
+    def _write_archive_index(self, archives):
+        self.archive_root.mkdir(parents=True, exist_ok=True)
+        body = {"schema_version": SCHEMA_VERSION, "archives": archives}
+        body["integrity"] = {"algo": "sha256", "hash": sha256_of(body)}
+        write_json_atomic(self.archive_index_path, body, fsync=True)
+
+    def _archive_frontier(self):
+        archives = self._archive_index().get("archives") or []
+        return max((int(row.get("last_sequence") or 0) for row in archives), default=0)
+
+    def _iter_archived_events(self):
+        for row in sorted(self._archive_index().get("archives") or [],
+                          key=lambda item: int(item.get("first_sequence") or 0)):
+            path = self.archive_root / row["path"]
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        yield json.loads(line)
+
+    def _manifest(self):
+        manifest = read_json(self.manifest_path, default=None)
+        if not isinstance(manifest, dict):
+            return None
+        integrity = manifest.get("integrity") or {}
+        body = {k: v for k, v in manifest.items() if k != "integrity"}
+        if integrity.get("hash") != sha256_of(body):
+            raise ValueError("event manifest integrity mismatch")
+        return manifest
+
+    @staticmethod
+    def _chain_step(previous, sequence, event_id, event_hash):
+        return sha256_of({
+            "previous": previous, "sequence": sequence,
+            "event_id": event_id, "event_hash": event_hash,
+        })
+
+    def _write_manifest(self, state):
+        body = {"schema_version": SCHEMA_VERSION, **state}
+        body["integrity"] = {"algo": "sha256", "hash": sha256_of(body)}
+        write_json_atomic(self.manifest_path, body, fsync=True)
+
+    def _write_transaction(self, body):
+        body = dict(body)
+        body["integrity"] = {"algo": "sha256", "hash": sha256_of(body)}
+        write_json_atomic(self.transaction_path, body, fsync=True)
+
+    def _recover_transaction_locked(self):
+        journal = read_json(self.transaction_path, default=None)
+        if not journal:
+            return
+        body = {key: value for key, value in journal.items() if key != "integrity"}
+        if (journal.get("integrity") or {}).get("hash") != sha256_of(body):
+            raise ValueError("event transaction journal integrity mismatch")
+        if journal.get("operation") == "append":
+            path = self.root / journal["path"]
+            if path.is_file():
+                event = read_json(path)
+                if _integrity_issue(event):
+                    raise ValueError("interrupted append left an invalid event")
+                self._write_manifest(journal["manifest"])
+        elif journal.get("operation") == "compact":
+            archive = self.archive_root / journal["archive"]
+            checkpoint = self.home / journal["checkpoint"]
+            indexed = any(
+                row.get("path") == journal["archive"]
+                for row in self._archive_index().get("archives", [])
+            )
+            complete = archive.is_file() and checkpoint.is_file() and indexed
+            if complete:
+                for relative in journal["live_paths"]:
+                    (self.root / relative).unlink(missing_ok=True)
+                self._write_manifest(journal["manifest"])
+            else:
+                self._write_archive_index(journal["old_archives"])
+                archive.unlink(missing_ok=True)
+                checkpoint.unlink(missing_ok=True)
+        else:
+            raise ValueError("unknown event transaction operation")
+        self.transaction_path.unlink(missing_ok=True)
+
+    def _index_existing(self):
+        base = self._archive_frontier()
+        chain = None
+        recent = []
+        last = base
+        rows = []
+        for offset, path in enumerate(self._scan_paths(), 1):
+            event = read_json(path)
+            rows.append((int(event.get("sequence") or (base + offset)), path, event))
+        for offset, (sequence, path, event) in enumerate(sorted(rows), 1):
+            if sequence != base + offset:
+                raise ValueError("event sequence gap at %s" % path)
+            event_id = event.get("event_id")
+            event_hash = (event.get("integrity") or {}).get("hash")
+            chain = self._chain_step(chain, sequence, event_id, event_hash)
+            recent.append(event_id)
+            last = sequence
+        return {
+            "base_sequence": base,
+            "event_count": last - base,
+            "last_sequence": last,
+            "chain_head": chain,
+            # ponytail: a bounded retry guard keeps append O(1); full uniqueness
+            # remains fail-closed in verify().
+            "recent_event_ids": recent[-256:],
+        }
 
     # -- writing -----------------------------------------------------------
     def append(self, event):
         """Persist *event* and return its path."""
         _validate_event_envelope(event)
+        # ponytail: one short global append lock; shard-local sequencing can replace it
+        # if measured write throughput ever makes this a bottleneck.
+        with FileLock(lifecycle_lock_path(self.home), timeout=30.0):
+            with FileLock(self.lock_path, timeout=30.0):
+                return self._append_locked(event)
+
+    def _append_locked(self, event):
+        """Append while the caller holds the lifecycle and event locks."""
+        _validate_event_envelope(event)
+        self._recover_transaction_locked()
+        manifest = self._manifest()
+        state = self._index_existing() if not manifest or "entries" in manifest else {
+                "base_sequence": int(manifest.get("base_sequence") or 0),
+                "event_count": int(manifest.get("event_count") or 0),
+                "last_sequence": int(manifest.get("last_sequence") or 0),
+                "chain_head": manifest.get("chain_head"),
+                "recent_event_ids": list(manifest.get("recent_event_ids") or []),
+        }
+        if event["event_id"] in state["recent_event_ids"]:
+            raise ValueError("duplicate event_id %s" % event["event_id"])
+        event["sequence"] = max(state["last_sequence"], self._archive_frontier()) + 1
+        event["integrity"] = {
+            "algo": "sha256", "hash": sha256_of({k: v for k, v in event.items()
+                                                   if k != "integrity"})
+        }
         ts = event.get("ts") or utc_now_ms()
         parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         shard = self.root / parsed.strftime("%Y-%m")
@@ -230,12 +392,34 @@ class EventStore:
         safe_ts = ts.replace(":", "").replace("-", "").replace(".", "")
         name = "%s-%s.json" % (safe_ts, event["event_id"][4:12])
         path = shard / name
-        # Collisions are effectively impossible (ms + uuid) but cheap to handle.
         while path.exists():  # pragma: no cover
             name = "%s-%s.json" % (safe_ts, uuid.uuid4().hex[:8])
             path = shard / name
+        recent = (state["recent_event_ids"] + [event["event_id"]])[-256:]
+        next_manifest = {
+            "base_sequence": state["base_sequence"],
+            "event_count": state["event_count"] + 1,
+            "last_sequence": event["sequence"],
+            "chain_head": self._chain_step(
+                state["chain_head"], event["sequence"], event["event_id"],
+                event["integrity"]["hash"],
+            ),
+            "recent_event_ids": recent,
+        }
+        self._write_transaction({
+            "schema_version": SCHEMA_VERSION, "operation": "append",
+            "path": str(path.relative_to(self.root)), "manifest": next_manifest,
+        })
         write_json_atomic(path, event, fsync=True)
+        self._write_manifest(next_manifest)
+        self.transaction_path.unlink(missing_ok=True)
         return path
+
+    def transaction(self, callback):
+        """Run one event-log check-and-append operation atomically."""
+        with FileLock(lifecycle_lock_path(self.home), timeout=30.0):
+            with FileLock(self.lock_path, timeout=30.0):
+                return callback(self)
 
     def record(self, kind, provenance, **kwargs):
         """Build and persist an event in one step; returns the event."""
@@ -246,31 +430,67 @@ class EventStore:
         self.append(event)
         return event
 
+    def record_if(self, kind, provenance, predicate, **kwargs):
+        """Atomically validate the current log and append one event."""
+        event = make_event(kind, provenance, **kwargs)
+        from .config import ConfigStore
+        if not ConfigStore(self.home).load().get("privacy", {}).get("store_free_text", False):
+            event = _without_free_text(event)
+
+        def commit(store):
+            predicate(list(store.iter_events(include_quarantined=True)))
+            store._append_locked(event)
+            return event
+
+        return self.transaction(commit)
+
     # -- reading -----------------------------------------------------------
     def shards(self):
         if not self.root.is_dir():
             return []
         return sorted(d for d in self.root.iterdir() if d.is_dir())
 
-    def iter_paths(self, since_shard=None):
+    def _scan_paths(self, since_shard=None):
         for shard in self.shards():
             if since_shard and shard.name < since_shard:
                 continue
             for path in sorted(shard.glob("*.json")):
                 yield path
 
+    def iter_paths(self, since_shard=None):
+        yield from self._scan_paths(since_shard=since_shard)
+
     def iter_events(self, kinds=None, project_id=None, session_id=None,
                     include_quarantined=False, since=None, limit=None):
         """Yield events in timestamp order, with cheap filtering."""
         count = 0
-        for path in self.iter_paths():
+        sources = list(self._iter_archived_events())
+        base = self._archive_frontier()
+        live = []
+        for offset, path in enumerate(self.iter_paths(), 1):
             try:
                 event = read_json(path)
+                if not event.get("sequence"):
+                    # v0.1 events were sealed before append sequences existed.
+                    # Verify the original bytes first, then create a resealed
+                    # in-memory ordering view; never hash the transient field
+                    # against the legacy seal.
+                    if _integrity_issue(event) is None:
+                        event = dict(event, sequence=base + offset)
+                        event["integrity"] = {
+                            "algo": "sha256",
+                            "hash": sha256_of({
+                                key: value for key, value in event.items()
+                                if key != "integrity"
+                            }),
+                        }
+                live.append(event)
             except Exception:  # noqa: BLE001 - a single bad file must not kill a fold
                 self._log_bad(path)
-                continue
+        sources.extend(sorted(live, key=lambda event: int(event.get("sequence") or 0)))
+        sources.sort(key=lambda event: int((event or {}).get("sequence") or 0))
+        for event in sources:
             if not isinstance(event, dict):
-                self._log_bad(path)
                 continue
             integrity_issue = _integrity_issue(event)
             authorization_issue = _authorization_issue(event)
@@ -307,17 +527,84 @@ class EventStore:
         return events[-n:]
 
     # -- integrity ---------------------------------------------------------
-    def verify(self):
+    def verify(self, _events_locked=False):
         """Recompute every event hash; return a report of any mismatches."""
+        if not _events_locked:
+            with FileLock(lifecycle_lock_path(self.home), timeout=30.0):
+                with FileLock(self.lock_path, timeout=30.0):
+                    return self.verify(_events_locked=True)
+        self._recover_transaction_locked()
         checked = tampered = unreadable = missing_integrity = 0
         problems = []
-        for path in self.iter_paths():
+        archive_ids = set()
+        archive_frontier = 0
+        try:
+            archive_index = self._archive_index()
+            for row in archive_index.get("archives") or []:
+                path = self.archive_root / row["path"]
+                if not path.is_file():
+                    problems.append({"path": str(path), "issue": "archive_missing"})
+                    continue
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                if digest != row.get("sha256"):
+                    problems.append({"path": str(path), "issue": "archive_hash_mismatch"})
+                    continue
+                archive_events = []
+                with gzip.open(path, "rt", encoding="utf-8") as handle:
+                    archive_events = [json.loads(line) for line in handle if line.strip()]
+                if len(archive_events) != int(row.get("event_count") or -1):
+                    problems.append({"path": str(path), "issue": "archive_count_mismatch"})
+                for archived in archive_events:
+                    issue = _integrity_issue(archived)
+                    if issue:
+                        problems.append({"path": str(path), "issue": issue,
+                                         "event_id": archived.get("event_id")})
+                    event_id = archived.get("event_id")
+                    if event_id in archive_ids:
+                        problems.append({"path": str(path), "issue": "duplicate_event_id",
+                                         "event_id": event_id})
+                    archive_ids.add(event_id)
+                archive_frontier = max(archive_frontier, int(row.get("last_sequence") or 0))
+        except Exception as exc:  # noqa: BLE001
+            problems.append({"path": str(self.archive_index_path),
+                             "issue": "archive_invalid", "detail": str(exc)})
+
+        try:
+            manifest = self._manifest()
+        except Exception as exc:  # noqa: BLE001
+            return {"checked": 0, "tampered": 0, "unreadable": 0,
+                    "missing_integrity": 0, "manifest_present": True,
+                    "ok": False, "problems": [{"path": str(self.manifest_path),
+                                                 "issue": "manifest_invalid",
+                                                 "detail": str(exc)}]}
+        if manifest is None and (any(self._scan_paths()) or archive_frontier):
+            problems.append({"path": str(self.manifest_path), "issue": "manifest_missing"})
+        legacy_entries = (manifest or {}).get("entries")
+        legacy_by_path = {
+            entry.get("path"): entry for entry in (legacy_entries or [])
+        }
+        disk_paths = list(self._scan_paths())
+        if legacy_entries is not None:
+            indexed = set(legacy_by_path)
+            present = {str(path.relative_to(self.root)) for path in disk_paths}
+            for missing in sorted(indexed - present):
+                problems.append({"path": missing, "issue": "event_missing"})
+            for extra in sorted(present - indexed):
+                problems.append({"path": extra, "issue": "event_unindexed"})
+
+        live_ids = set(archive_ids)
+        live_chain = None
+        live_sequences = []
+        loaded = []
+        for offset, path in enumerate(disk_paths, 1):
             try:
                 event = read_json(path)
             except Exception as exc:  # noqa: BLE001
                 unreadable += 1
                 problems.append({"path": str(path), "issue": "unreadable", "detail": str(exc)})
                 continue
+            loaded.append((int(event.get("sequence") or (archive_frontier + offset)), path, event))
+        for sequence, path, event in sorted(loaded):
             integrity = (event or {}).get("integrity") or {}
             stored = integrity.get("hash")
             if not stored:
@@ -327,16 +614,48 @@ class EventStore:
                 continue
             body = {k: v for k, v in event.items() if k != "integrity"}
             checked += 1
+            event_id = event.get("event_id")
+            live_sequences.append(sequence)
+            if event_id in live_ids:
+                problems.append({"path": str(path), "issue": "duplicate_event_id",
+                                 "event_id": event_id})
+            live_ids.add(event_id)
+            live_chain = self._chain_step(live_chain, sequence, event_id, stored)
             if sha256_of(body) != stored:
                 tampered += 1
                 problems.append({"path": str(path), "issue": "hash_mismatch",
-                                 "event_id": event.get("event_id")})
+                                 "event_id": event_id})
+            elif legacy_entries is not None:
+                rel = str(path.relative_to(self.root))
+                expected = (legacy_by_path.get(rel) or {}).get("hash")
+                if expected != stored:
+                    problems.append({"path": str(path), "issue": "manifest_hash_mismatch",
+                                     "event_id": event_id})
+        expected_sequences = list(range(
+            archive_frontier + 1, archive_frontier + 1 + len(loaded)
+        ))
+        if live_sequences != expected_sequences:
+            problems.append({"path": str(self.manifest_path), "issue": "sequence_gap"})
+        if manifest and legacy_entries is None:
+            expected_state = {
+                "base_sequence": archive_frontier,
+                "event_count": len(loaded),
+                "last_sequence": live_sequences[-1] if live_sequences else archive_frontier,
+                "chain_head": live_chain,
+            }
+            for key, actual in expected_state.items():
+                if manifest.get(key) != actual:
+                    problems.append({
+                        "path": str(self.manifest_path),
+                        "issue": "manifest_%s_mismatch" % key,
+                    })
         return {
             "checked": checked,
             "tampered": tampered,
             "unreadable": unreadable,
             "missing_integrity": missing_integrity,
-            "ok": tampered == 0 and unreadable == 0 and missing_integrity == 0,
+            "manifest_present": manifest is not None,
+            "ok": tampered == 0 and unreadable == 0 and missing_integrity == 0 and not problems,
             "problems": problems[:50],
         }
     def _log_bad(self, path):
@@ -352,13 +671,7 @@ class EventStore:
         quarantined = 0
         total = 0
         first_ts = last_ts = None
-        for path in self.iter_paths():
-            try:
-                event = read_json(path)
-            except Exception:  # noqa: BLE001
-                continue
-            if not isinstance(event, dict):
-                continue
+        for event in self.iter_events(include_quarantined=True):
             total += 1
             by_kind[event.get("kind", "?")] = by_kind.get(event.get("kind", "?"), 0) + 1
             prov = event.get("provenance", "?")
@@ -405,6 +718,28 @@ def _authorization_issue(event):
             and provenance not in DIRECT_USER_PROVENANCE:
         return "control_requires_direct_user:%s" % (event or {}).get("kind")
 
+    kind = (event or {}).get("kind")
+    payload = (event or {}).get("payload") or {}
+    if kind in {"correction", "onboarding_answer"} and provenance not in {
+            "direct_user_message", "explicit_user_review"}:
+        return "%s_requires_direct_user" % kind
+    if kind == "feedback":
+        channel = payload.get("channel")
+        allowed = {
+            "explicit": {"direct_user_message", "explicit_user_review"},
+            "corrective": {"direct_user_message", "explicit_user_review"},
+            "comparative": {"direct_user_message", "explicit_user_review"},
+            "repeated_comparative": {"direct_user_message", "explicit_user_review"},
+            "edit": {"direct_user_edit"},
+            "outcome": {"agent_inference"}, "behavioral": {"agent_inference"},
+            "repeated_behavioral": {"agent_inference"},
+        }
+        if channel in allowed and provenance not in allowed[channel]:
+            return "feedback_channel_provenance_mismatch:%s:%s" % (channel, provenance)
+    if kind == "outcome" and payload.get("evaluator_type") == "observed_human_outcome" \
+            and provenance != "explicit_user_review":
+        return "observed_outcome_requires_user_review"
+
     observation = (event or {}).get("observation") or {}
     source = observation.get("source_type")
     scope = observation.get("scope", "global")
@@ -413,13 +748,16 @@ def _authorization_issue(event):
         return "missing_scope_key:project"
     if scope == "domain" and not (scope_key or (event or {}).get("domain")):
         return "missing_scope_key:domain"
-    if provenance == "agent_inference" and source in {
-        "explicit_statement", "explicit_correction", "explicit_rejection",
-        "direct_edit", "repeated_selection", "comparative_choice", "onboarding_answer",
-    }:
+    if provenance == "agent_inference" and source in HIGH_TRUST_SOURCES:
         return "source_provenance_mismatch:%s:%s" % (provenance, source)
+    if source == "direct_edit" and provenance != "direct_user_edit":
+        return "source_requires_provenance:%s:%s" % (source, "direct_user_edit")
+    if source == "onboarding_answer" and provenance != "onboarding_answer":
+        return "source_requires_provenance:%s:%s" % (source, "onboarding_answer")
     if provenance == "onboarding_answer" and source not in (None, "onboarding_answer"):
         return "source_provenance_mismatch:%s:%s" % (provenance, source)
+    if provenance == "onboarding_answer" and not (event or {}).get("session_id"):
+        return "onboarding_requires_session"
     if provenance == "direct_user_edit" and source not in (None, "direct_edit"):
         return "source_provenance_mismatch:%s:%s" % (provenance, source)
     return None
@@ -461,7 +799,7 @@ PROSE_KEYS = frozenset({
 #: ``quarantine_reason`` is written by LIWM and is the only record of why
 #: something was refused.
 STRUCTURAL_KEYS = frozenset({
-    "value", "dimension", "scope_key", "path", "issue", "quarantine_reason",
+    "value", "label", "dimension", "scope_key", "path", "issue", "quarantine_reason",
 })
 
 #: A "token": an identifier, enum member, path, version or hash.  Prose is

@@ -218,8 +218,11 @@ class TestCliCore(CliTestCase):
         self.run_cli("reset")
         self.assertIsNone(self.belief("interaction_profile.pace"))
         self.run_cli("reset", "--hard", expect=2)          # refuses without --yes
-        self.run_cli("reset", "--hard", "--yes")
+        result = self.run_cli("reset", "--hard", "--yes")
         self.assertIsNone(self.belief("interaction_profile.pace"))
+        backup = __import__("pathlib").Path(result["backup"])
+        self.assertTrue((backup / "events").is_dir())
+        self.assertTrue((backup / "manifest.json").is_file())
 
     def test_durable_rollback_and_new_branch(self):
         first = self.run_cli("observe", "--dimension", "interaction_profile.pace",

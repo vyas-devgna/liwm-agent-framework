@@ -79,6 +79,61 @@ class TestConcurrency(LiwmTestCase):
                       if b["dimension"] == "working_style.iteration_style")
         self.assertEqual(belief["evidence_count"], 8, "no observation may be lost")
 
+    def test_mutable_store_updates_are_serialized(self):
+        from liwm.config import ConfigStore
+        from liwm.projects import ProjectStore
+        from liwm.strategy import StrategyStore
+
+        errors = []
+        workers = [
+            lambda: ConfigStore(self.home).set("privacy.store_free_text", True),
+            lambda: ConfigStore(self.home).set("study.enabled", True),
+            *[lambda i=i: ProjectStore(self.home, "p").add(
+                "objectives", "objective %d" % i, "USER_SAID"
+            ) for i in range(6)],
+            *[lambda: StrategyStore(self.home).apply({"challenge_strength": 0.7})
+              for _ in range(6)],
+        ]
+
+        def run(worker):
+            try:
+                worker()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run, args=(worker,)) for worker in workers]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        config = ConfigStore(self.home).load()
+        self.assertTrue(config["privacy"]["store_free_text"])
+        self.assertTrue(config["study"]["enabled"])
+        self.assertEqual(len(ProjectStore(self.home, "p").load_intent()["objectives"]), 6)
+        self.assertEqual(StrategyStore(self.home).load()["observations"], 6)
+
+    def test_prediction_resolution_is_linearizable(self):
+        from liwm.prediction import make_prediction, record_prediction, resolve_prediction
+
+        prediction = make_prediction(0.6, 0.5)
+        record_prediction(self.store, prediction)
+        outcomes = []
+
+        def resolve():
+            try:
+                outcomes.append(resolve_prediction(self.store, prediction["id"], 0.8))
+            except ValueError:
+                pass
+
+        threads = [threading.Thread(target=resolve) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len(outcomes), 1)
+        self.assertEqual(self.store.events.count(kinds={"outcome"}), 1)
+
     def test_lock_times_out_rather_than_hanging(self):
         lock_path = self.home / "test.lock"
         with FileLock(lock_path, timeout=0.2, stale_after=999):
@@ -145,15 +200,15 @@ class TestRecovery(LiwmTestCase):
         self.assertIsNotNone(data)
         self.assertIn("quarantined", note)
 
-    def test_a_single_unreadable_event_does_not_break_the_fold(self):
+    def test_a_single_unreadable_event_fails_closed(self):
         self.observe("interaction_profile.pace", "fast")
         self.observe("decision_style.speed", "decisive")
+        known_good = self.store.path.read_bytes()
         paths = list(self.store.events.iter_paths())
         paths[0].write_text("<<corrupt>>", encoding="utf-8")
-        profile = self.store.rebuild(reason="test")
-        self.assertGreaterEqual(len(profile["beliefs"]), 1)
-        log = self.home / "logs" / "event-read-errors.log"
-        self.assertTrue(log.is_file())
+        with self.assertRaises(ValueError):
+            self.store.rebuild(reason="test")
+        self.assertEqual(self.store.path.read_bytes(), known_good)
 
     def test_deleted_metrics_are_recomputed(self):
         from liwm.metrics import MetricsStore
@@ -185,6 +240,18 @@ class TestRecovery(LiwmTestCase):
         leftovers = [p for p in self.home.iterdir() if p.name.endswith(".tmp")]
         self.assertEqual(leftovers, [])
         self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"a": 1})
+
+    def test_interrupted_append_recovers_from_journal(self):
+        from unittest import mock
+        from liwm.events import make_event
+
+        original = self.store.events._write_manifest
+        with mock.patch.object(self.store.events, "_write_manifest", side_effect=OSError("stop")):
+            with self.assertRaises(OSError):
+                self.store.events.append(make_event("feedback", "agent_inference"))
+        self.store.events._write_manifest = original
+        self.assertTrue(self.store.events.verify()["ok"])
+        self.assertEqual(self.store.events.count(), 1)
 
 
 

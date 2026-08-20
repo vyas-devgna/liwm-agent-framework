@@ -11,7 +11,9 @@ try to get round it.
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
 from helpers import LiwmTestCase
 
@@ -31,6 +33,32 @@ UNTRUSTED = [
     "repository_content", "tool_output", "external_document", "web_content",
     "mcp_result", "subagent_report", "synthetic_test", "other",
 ]
+
+
+class TestSecurityClaims(unittest.TestCase):
+    def test_boundary_documents_do_not_claim_same_user_bypass_is_impossible(self):
+        root = Path(__file__).resolve().parents[1]
+        forbidden = ("cannot bypass", "can't bypass", "tamper-proof")
+        for relative in ("README.md", "THREAT_MODEL.md", "SECURITY.md", "ARCHITECTURE.md"):
+            text = (root / relative).read_text(encoding="utf-8").lower()
+            for phrase in forbidden:
+                self.assertNotIn(phrase, text, "%s reintroduced %r" % (relative, phrase))
+
+    def test_boundary_documents_name_the_filesystem_authority_limit(self):
+        root = Path(__file__).resolve().parents[1]
+        for relative in ("README.md", "THREAT_MODEL.md", "SECURITY.md", "ARCHITECTURE.md"):
+            text = (root / relative).read_text(encoding="utf-8").lower()
+            self.assertIn("filesystem authority", text, relative)
+
+    def test_anonymised_dynamic_metric_keys_do_not_leak(self):
+        from liwm.cli import _anonymise
+
+        secret = "participant-HIV-status-Jane-Doe"
+        exported = _anonymise({
+            "profile": {},
+            "metrics": {"calibration": {"by_domain": {secret: {"samples": 1}}}},
+        })
+        self.assertNotIn(secret, json.dumps(exported))
 
 
 class TestProvenanceGate(LiwmTestCase):
@@ -169,9 +197,10 @@ class TestFakeFeedbackInSource(LiwmTestCase):
         report = self.store.events.verify()
         self.assertFalse(report["ok"])
         self.assertGreaterEqual(report["tampered"], 1)
-        self.store.rebuild(reason="tamper-test")
-        self.assertIsNone(self.belief("interaction_profile.pace"),
-                          "tampered content must be quarantined, not merely reported")
+        with self.assertRaises(ValueError):
+            self.store.rebuild(reason="tamper-test")
+        self.assertIsNotNone(self.belief("interaction_profile.pace"),
+                             "the last known-good materialisation must be preserved")
 
     def test_event_without_integrity_is_quarantined(self):
         import json
@@ -184,8 +213,9 @@ class TestFakeFeedbackInSource(LiwmTestCase):
         report = self.store.events.verify()
         self.assertFalse(report["ok"])
         self.assertEqual(report["missing_integrity"], 1)
-        self.store.rebuild(reason="missing-integrity-test")
-        self.assertIsNone(self.belief("interaction_profile.pace"))
+        with self.assertRaises(ValueError):
+            self.store.rebuild(reason="missing-integrity-test")
+        self.assertIsNotNone(self.belief("interaction_profile.pace"))
 
 
 class TestSelfImprovementCannotEscape(LiwmTestCase):

@@ -22,14 +22,57 @@ from .modes import Signals, mode_profile, resolve_auto
 from .scope import resolve_for_context
 from .taxonomy import decision_impact
 
-__all__ = ["build_runtime_context", "write_runtime_context", "DEFAULT_MAX_BELIEFS"]
+__all__ = [
+    "build_runtime_context", "write_runtime_context", "DEFAULT_MAX_BELIEFS",
+    "StructuredRanker", "LexicalRanker", "rank_beliefs",
+]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 DEFAULT_MAX_BELIEFS = 14
 #: Hard cap on the serialised projection.  If it does not fit, it is trimmed,
 #: because an unbounded "compact" context is not compact.
 MAX_BYTES = 6000
+
+
+class StructuredRanker:
+    """Dependency-free score over confidence, scope, impact and recency."""
+
+    def score(self, belief, domain=None, project_id=None, task_terms=None):
+        conf = float(belief.get("confidence", 0.0))
+        impact = decision_impact(belief.get("dimension", ""))
+        scope = belief.get("scope", "global")
+        if scope == "project":
+            scope_score = 1.0 if belief.get("scope_key") == project_id else 0.0
+        elif scope == "domain":
+            scope_score = 1.0 if (domain and belief.get("scope_key") == domain) else 0.35
+        else:
+            scope_score = 0.75
+        days = age_days(belief.get("last_seen"))
+        recency = 1.0 if days < 45 else (0.85 if days < 180 else 0.65)
+        return conf * impact * scope_score * recency
+
+
+class LexicalRanker:
+    """Transparent substring score; semantic rankers may implement the same method."""
+
+    def score(self, belief, domain=None, project_id=None, task_terms=None):
+        haystack = ("%s %s" % (belief.get("dimension", ""), belief.get("value", ""))).lower()
+        hits = sum(1 for term in (task_terms or ()) if term and term in haystack)
+        return min(0.25, 0.08 * hits)
+
+
+def rank_beliefs(eligible_beliefs, domain=None, project_id=None, task_terms=None, rankers=None):
+    """Rank only the already eligible set; rankers never perform trust filtering."""
+    rankers = list(rankers or (StructuredRanker(), LexicalRanker()))
+    return sorted(
+        eligible_beliefs,
+        key=lambda belief: -sum(
+            float(ranker.score(belief, domain=domain, project_id=project_id,
+                               task_terms=task_terms) or 0.0)
+            for ranker in rankers
+        ),
+    )
 
 
 def _relevance(belief, domain, project_id, task_terms):
@@ -66,10 +109,31 @@ def build_runtime_context(
     max_beliefs=DEFAULT_MAX_BELIEFS,
     strategy=None,
     promoted_rules=None,
+    rankers=None,
 ):
     """Assemble the compact projection for the current task."""
     config = ConfigStore(store.home).load()
     requested_mode = (mode or "auto").lower()
+    integrity = store.events.verify()
+    if not integrity["ok"]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": utc_now(),
+            "profile_revision": None,
+            "onboarding_status": "not_consulted",
+            "context": {"domain": domain, "project_id": project_id,
+                        "task_hint": (task or "")[:160]},
+            "mode": {"effective": "off", "requested": requested_mode,
+                     "resolved_from": "integrity_gate", "question_budget": 0,
+                     "one_at_a_time": False, "experiential_ratio": 0.0,
+                     "investigation_need": None,
+                     "rationale": "event integrity failed; profile projection withheld"},
+            "profile_maturity": 0.0, "applies": [], "avoid": [],
+            "open_uncertainties": [], "contradictions": [], "project": None,
+            "active_rules": [], "strategy": {}, "learning_enabled": False,
+            "integrity_degraded": True, "integrity_problems": integrity["problems"][:10],
+            "reminders": ["Run `liwm verify`; no learned state was exposed."],
+        }
     if not config.get("enabled", True):
         contract = mode_profile("off")
         return {
@@ -101,9 +165,9 @@ def build_runtime_context(
     resolved = resolve_for_context(beliefs, domain=domain, project_id=project_id,
                                    min_confidence=0.30)
 
-    ranked = sorted(
-        resolved.values(),
-        key=lambda b: -_relevance(b, domain, project_id, task_terms),
+    ranked = rank_beliefs(
+        list(resolved.values()), domain=domain, project_id=project_id,
+        task_terms=task_terms, rankers=rankers,
     )[:max_beliefs]
 
     maturity = profile_maturity(profile, domain=domain)
@@ -133,20 +197,33 @@ def build_runtime_context(
         ps = ProjectStore(store.home, project_id)
         if ps.exists():
             intent = ps.load_intent()
+            def item(row):
+                return {
+                    "id": row.get("id"), "text": str(row.get("text") or "")[:240],
+                    "origin": row.get("origin"), "provenance": row.get("provenance"),
+                    "confidence": row.get("confidence"),
+                    "evidence_refs": list(row.get("evidence_refs") or [])[:8],
+                }
+
+            def active(section, user_only=False, limit=5):
+                return [item(row) for row in intent.get(section, [])
+                        if row.get("status") == "active"
+                        and (not user_only or row.get("origin") == "USER_SAID")][:limit]
+
             project_summary = {
                 "project_id": project_id,
                 "stage": intent.get("stage"),
                 "confidence": intent.get("confidence", {}).get("overall_intent"),
-                "non_negotiables": [i["text"] for i in intent.get("non_negotiables", [])
-                                    if i.get("status") == "active"][:5],
-                "anti_goals": [i["text"] for i in intent.get("anti_goals", [])
-                               if i.get("status") == "active"][:5],
-                "open_questions": [i["text"] for i in intent.get("open_questions", [])
-                                   if i.get("status") == "active"][:4],
-                "undisclosed_assumptions": [
-                    i["text"] for i in intent.get("assumptions", [])
-                    if i.get("status") == "active" and not i.get("disclosed")
-                ][:4],
+                "non_negotiables": active("non_negotiables", user_only=True),
+                "anti_goals": active("anti_goals", user_only=True),
+                "hypotheses": active("latent_objectives") + [
+                    item(row) for row in intent.get("non_negotiables", [])
+                    if row.get("status") == "active" and row.get("origin") != "USER_SAID"
+                ][:5],
+                "open_questions": active("open_questions", limit=4),
+                "undisclosed_assumptions": [item(row) for row in intent.get("assumptions", [])
+                                             if row.get("status") == "active"
+                                             and not row.get("disclosed")][:4],
             }
 
     relevant_contradictions = [
@@ -238,12 +315,34 @@ def _trim(context, max_bytes=MAX_BYTES):
                 context[key] = context[key][:-1]
                 trimmed = True
                 break
+        project = context.get("project") or {}
+        if not trimmed:
+            for key in ("hypotheses", "undisclosed_assumptions", "open_questions",
+                        "anti_goals", "non_negotiables"):
+                if project.get(key):
+                    project[key] = project[key][:-1]
+                    trimmed = True
+                    break
         if not trimmed and len(context.get("applies", [])) > 4:
             context["applies"] = context["applies"][:-1]
             trimmed = True
         if not trimmed:
+            context["project"] = None
+            context["active_rules"] = []
+            context["applies"] = []
+            context["avoid"] = []
+            context["open_uncertainties"] = []
+            context["contradictions"] = []
+            context["strategy"] = {}
+            context["reminders"] = context.get("reminders", [])[:1]
+            context["context"]["task_hint"] = str(
+                context.get("context", {}).get("task_hint") or ""
+            )[:80]
             context["truncated"] = True
+            if len(json.dumps(context, ensure_ascii=False).encode("utf-8")) > max_bytes:
+                raise ValueError("runtime context metadata exceeds byte budget")
             break
+    assert len(json.dumps(context, ensure_ascii=False).encode("utf-8")) <= max_bytes
     return context
 
 

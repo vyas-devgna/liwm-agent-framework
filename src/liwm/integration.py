@@ -10,7 +10,9 @@ import re
 
 BEGIN_PREFIX = "<!-- LIWM:BEGIN"
 END_MARKER = "<!-- LIWM:END -->"
-_BLOCK_RE = re.compile(r"(?m)^<!-- LIWM:BEGIN[^\n]*-->\n.*?^<!-- LIWM:END -->\n?", re.S)
+_BLOCK_RE = re.compile(
+    r"(?m)^<!-- LIWM:BEGIN[^\r\n]*-->\r?\n.*?^<!-- LIWM:END -->(?:\r?\n)?", re.S
+)
 
 
 class MalformedBootstrap(ValueError):
@@ -36,7 +38,8 @@ def upsert_bootstrap(original, block):
     _validate_markers(block)
     if block.count(BEGIN_PREFIX) != 1:
         raise MalformedBootstrap("replacement must contain exactly one LIWM block")
-    clean = block.rstrip("\n") + "\n"
+    newline = "\r\n" if "\r\n" in original else "\n"
+    clean = block.replace("\r\n", "\n").rstrip("\n").replace("\n", newline) + newline
     if BEGIN_PREFIX in original:
         return _BLOCK_RE.sub(clean, original, count=1)
     if not original:
@@ -44,7 +47,7 @@ def upsert_bootstrap(original, block):
     # Always add exactly one separator newline. remove_bootstrap removes this
     # same byte, making install -> uninstall lossless even when the source had
     # zero, one, or several trailing newlines.
-    return original + "\n" + clean
+    return original + newline + clean
 
 
 def remove_bootstrap(original):
@@ -54,6 +57,8 @@ def remove_bootstrap(original):
         return original
     match = _BLOCK_RE.search(original)
     start, end = match.span()
-    if start > 0 and original[start - 1] == "\n":
+    if start >= 2 and original[start - 2:start] == "\r\n":
+        start -= 2
+    elif start > 0 and original[start - 1] == "\n":
         start -= 1
     return original[:start] + original[end:]

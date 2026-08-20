@@ -29,6 +29,8 @@ __all__ = [
 #: Directories created by :func:`ensure_layout`.
 LAYOUT_DIRS = (
     "events",
+    "archives",
+    "checkpoints",
     "sessions",
     "projects",
     "learning",
@@ -95,7 +97,7 @@ def ensure_layout(home=None) -> Path:
             "  metrics.json   - local, non-telemetric performance measurements\n"
             "  backups/       - timestamped snapshots taken before risky writes\n\n"
             "Inspect it with:  liwm profile   |   liwm export   |   liwm stats\n"
-            "Delete it with:   liwm reset --hard   (or just remove this directory)\n",
+            "Reset with backup: liwm reset --hard   |   Permanently delete: liwm delete --yes\n",
             encoding="utf-8",
         )
         try:

@@ -4,9 +4,11 @@ The primary consumer of this CLI is an *agent*, not a human, so every command
 supports ``--json`` for machine parsing while defaulting to a compact
 human-readable form for the terminal.
 
-The CLI is the only sanctioned way for a skill to mutate LIWM state.  That
-matters: it means the provenance gate, the privacy gate, atomic writes and the
-event log cannot be bypassed by a model deciding to edit ``user.json`` directly.
+The CLI is the sanctioned way for a skill to mutate LIWM state.  Normal
+framework-mediated mutations therefore pass through provenance, privacy,
+atomicity and audit checks.  LIWM is not an OS security boundary: a process
+with the user's filesystem authority can deliberately rewrite the framework,
+events, materialised views or host configuration.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, SOURCE_WEIGHTS, TRUSTED
 from .events import EVENT_KINDS, EventStore
 from .feedback import FEEDBACK_KINDS, record_feedback
 from .hosts import detect_hosts
-from .jsonio import read_json_resilient, utc_now, write_json_atomic
+from .jsonio import FileLock, lifecycle_lock_path, read_json_resilient, utc_now, write_json_atomic
 from .metrics import MetricsStore
 from .migrate import CURRENT_SCHEMA_VERSION, migrate_home
 from .modes import MODE_PROFILES, Signals, mode_profile, resolve_auto
@@ -106,6 +108,7 @@ def _validate_state_documents(home, schema_store, include_events=False):
         (Path(home) / "config.json", "config"),
         (Path(home) / "metrics.json", "metrics"),
         (Path(home) / "runtime_context.json", "runtime-context"),
+        (Path(home) / "intent-graph.json", "intent-graph"),
         (Path(home) / "learning" / "personal-strategy.json", "personal-strategy"),
     ]
     specs.extend((p, "project-intent") for p in (Path(home) / "projects").glob("*/intent.json"))
@@ -398,6 +401,50 @@ def cmd_hosts(args):
     return _emit(args, data, text="\n".join(lines))
 
 
+def cmd_installation(args):
+    """Plan and execute hash-guarded host installation lifecycle operations."""
+    from .installation import (
+        apply_plan, create_install_plan, create_uninstall_plan, load_plan, save_plan,
+        verify_plan,
+    )
+
+    home = _home(args)
+    if args.action == "plan":
+        if not args.host:
+            raise ValueError("%s plan requires --host" % args.command)
+        if args.command == "install":
+            if not args.block:
+                raise ValueError("install plan requires --block")
+            block = Path(args.block).expanduser().read_text(encoding="utf-8")
+            plan = create_install_plan(
+                args.host, home, block, skills_source=args.skills_source,
+                include_skills=not args.no_skills,
+            )
+        else:
+            plan = create_uninstall_plan(args.host, home)
+        destination = (Path(args.output).expanduser() if args.output else
+                       Path(home) / "install-plans" / (plan["plan_id"] + ".json"))
+        save_plan(plan, destination)
+        result = dict(plan)
+        result["plan_file"] = str(destination.absolute())
+        return _emit(args, result, text="wrote %s plan %s" % (args.command, destination))
+
+    if not args.plan:
+        raise ValueError("%s %s requires --plan" % (args.command, args.action))
+    plan = load_plan(Path(args.plan).expanduser())
+    if plan["operation"] != args.command:
+        raise ValueError("plan operation is %s, not %s" % (plan["operation"], args.command))
+    if args.action == "verify":
+        report = verify_plan(plan)
+        if not report["ok"]:
+            raise ValueError("installation verification failed for %d target(s)" %
+                             len(report["failures"]))
+    else:
+        report = apply_plan(plan)
+    return _emit(args, report, text="%s %s complete (%d file changes)" % (
+        args.command, args.action, report.get("changed", 0)))
+
+
 def cmd_profile(args):
     store = _store(args)
     profile = store.load()
@@ -500,6 +547,42 @@ def cmd_observe(args):
     return _emit(args, data, text=text)
 
 
+def cmd_observe_intent(args):
+    guarded = _learning_guard(args, "observation")
+    if guarded is not None:
+        return guarded
+    store = _store(args)
+    common = {
+        "scope": args.scope, "scope_key": args.scope_key, "polarity": args.polarity,
+        "decay_policy": args.decay, "note": args.note, "session_id": args.session,
+        "project_id": args.project, "domain": args.domain,
+        "derived_from": args.derived_from or [],
+    }
+    value = _coerce(args.value)
+    pathway = args.command.removeprefix("observe-")
+    if pathway == "user":
+        event, profile = store.observe_user(args.dimension, value, args.source, **common)
+    elif pathway == "edit":
+        event, profile = store.observe_edit(args.dimension, value, **common)
+    elif pathway == "review":
+        event, profile = store.observe_review(args.dimension, value, args.source, **common)
+    elif pathway == "inference":
+        event, profile = store.observe_inference(args.dimension, value, args.source, **common)
+    else:
+        event, profile = store.observe_untrusted(
+            args.dimension, value, args.provenance, args.source, **common
+        )
+    return _emit(args, {
+        "pathway": pathway, "event_id": event["event_id"],
+        "provenance": event["provenance"], "source_type": event["observation"]["source_type"],
+        "quarantined": event.get("quarantined", False),
+        "quarantine_reason": event.get("quarantine_reason"),
+        "profile_revision": profile["revision"],
+    }, text="%s observation %s%s" % (
+        pathway, event["event_id"], " (quarantined)" if event.get("quarantined") else ""
+    ))
+
+
 def _coerce(value):
     if value is None:
         return None
@@ -600,8 +683,11 @@ def cmd_plan(args):
     never = set(qconfig.get("never_ask_about") or [])
     from .question_bank import QUESTION_BANK
     bank = [q for q in QUESTION_BANK if not never.intersection(q.get("resolves", []))]
-    planner = QuestionPlanner(contract, resolved=resolved,
-                              strategy=StrategyStore(store.home).load(), bank=bank)
+    from .question_outcomes import QuestionOutcomeStore
+    planner = QuestionPlanner(
+        contract, resolved=resolved, strategy=StrategyStore(store.home).load(), bank=bank,
+        outcome_store=QuestionOutcomeStore(store), domain=args.domain,
+    )
     requested_budget = args.max_questions if args.max_questions is not None \
         else contract.get("max_questions")
     plan = planner.plan(
@@ -695,17 +781,30 @@ def cmd_project(args):
             sys.stderr.write("unknown section %r; expected one of: %s\n"
                              % (args.section, ", ".join(INTENT_SECTIONS)))
             return EXIT_USAGE
-        item = ps.add(args.section, args.text, args.origin,
-                      confidence=args.confidence, evidence_refs=args.evidence or [])
         project_provenance = {
             "USER_SAID": "direct_user_message",
             "AGENT_INFERRED": "agent_inference",
             "AGENT_DERIVED": "tool_output",
         }[args.origin]
-        store.events.record("project_intent_update", project_provenance,
-                            payload={"action": "add", "section": args.section,
-                                     "item_id": item["id"], "origin": args.origin},
-                            project_id=project_id, domain=args.domain)
+        if PROVENANCE_TRUST[project_provenance] <= 0.0:
+            event = store.events.record(
+                "project_intent_update", project_provenance,
+                payload={"action": "quarantined_add", "section": args.section,
+                         "origin": args.origin}, project_id=project_id, domain=args.domain,
+            )
+            return _emit(args, {"quarantined": True, "event_id": event["event_id"],
+                                "reason": event["quarantine_reason"]},
+                         text="project intent recorded for audit but quarantined")
+        item = ps.add(
+            args.section, args.text, args.origin, confidence=args.confidence,
+            evidence_refs=args.evidence or [], provenance=project_provenance,
+        )
+        store.events.record(
+            "project_intent_update", project_provenance,
+            payload={"action": "add", "section": args.section,
+                     "item_id": item["id"], "origin": args.origin},
+            project_id=project_id, domain=args.domain,
+        )
         return _emit(args, item, text="%s <- [%s] %s" % (args.section, args.origin, args.text))
     if args.action == "stage":
         doc = ps.set_stage(args.text)
@@ -727,6 +826,66 @@ def cmd_project(args):
         return _emit(args, {"removed": removed, "project_id": project_id},
                      text="removed project %s and tombstoned its evidence" % project_id)
     return EXIT_USAGE
+
+
+def cmd_intent(args):
+    """Inspect or mutate the event-derived intent state graph."""
+    from .intent_graph import IntentGraphStore
+
+    graph = IntentGraphStore(_home(args))
+    if args.intent_action == "graph":
+        data = graph.graph(
+            scope=args.scope, scope_key=args.scope_key,
+            include_quarantined=args.include_quarantined,
+        )
+        return _emit(args, data, text="intent graph: %d node(s), %d edge(s)" % (
+            len(data["nodes"]), len(data["edges"]),
+        ))
+    if args.intent_action == "explain":
+        data = graph.explain(args.id)
+        element = data["element"]
+        return _emit(args, data, text="%s %s (%s, confidence %.2f)\n%d evidence ref(s)" % (
+            element["type"], element.get("label", element["id"]), element["id"],
+            element["confidence"], len(data["basis"]),
+        ))
+    if args.intent_action == "trace":
+        data = graph.trace(args.id)
+        return _emit(args, data, text="trace %s: %d node(s), %d edge(s), %d event(s)" % (
+            args.id, len(data["nodes"]), len(data["edges"]),
+            len(data["evidence_events"]),
+        ))
+
+    guarded = _learning_guard(args, "intent graph mutation")
+    if guarded is not None:
+        return guarded
+    provenance = {
+        "user": "direct_user_message", "edit": "direct_user_edit",
+        "review": "explicit_user_review", "inference": "agent_inference",
+    }[args.origin]
+    common = {
+        "provenance": provenance, "confidence": args.confidence,
+        "scope": args.scope, "scope_key": args.scope_key,
+        "evidence_refs": args.evidence or [], "status": args.status,
+        "decay_policy": args.decay, "session_id": args.session,
+        "project_id": args.project, "domain": args.domain,
+    }
+    if args.intent_action == "node":
+        event, element = graph.add_node(
+            args.type, args.label, value=_coerce(args.value), **common,
+        )
+    else:
+        event, element = graph.add_edge(
+            args.type, args.source, args.target, **common,
+        )
+    data = {
+        "event_id": event["event_id"], "element": element,
+        "quarantined": event.get("quarantined", False),
+        "quarantine_reason": event.get("quarantine_reason"),
+    }
+    return _emit(args, data, text="%s %s%s" % (
+        args.intent_action, element["id"],
+        " (quarantined)" if event.get("quarantined") else "",
+    ))
 
 
 def cmd_why(args):
@@ -839,6 +998,24 @@ def cmd_predict(args):
                          prediction["id"], prediction["id"]))
 
 
+def cmd_predict_preference(args):
+    from .prediction import make_preference_prediction, record_prediction
+
+    options = {}
+    for raw in args.option:
+        label, separator, probability = raw.partition("=")
+        if not separator or not label:
+            raise ValueError("--option must be LABEL=PROBABILITY")
+        options[label] = float(probability)
+    prediction = make_preference_prediction(
+        options, args.confidence, basis=args.basis or [], artifact=args.artifact,
+    )
+    record_prediction(_store(args), prediction, session_id=args.session,
+                      project_id=args.project, domain=args.domain)
+    return _emit(args, prediction, text="predicted preference %s as %s"
+                 % (prediction["predicted_option"], prediction["id"]))
+
+
 def cmd_resolve(args):
     """Score an earlier prediction against what actually happened."""
     from .prediction import resolve_prediction
@@ -849,13 +1026,21 @@ def cmd_resolve(args):
             store, args.prediction, args.acceptance,
             observed_friction=args.friction or [],
             session_id=args.session, project_id=args.project, domain=args.domain,
+            evaluator_type=args.evaluator, actual_option=args.actual_option,
+            evidence_event_id=args.evidence_event,
         )
     except KeyError as exc:
         raise ValueError(str(exc)) from exc
 
-    lines = ["predicted %.2f, actual %.2f, error %+.2f (%s)"
-             % (result["predicted_acceptance"], result["actual_acceptance"],
-                result["error"], result["direction"])]
+    if result["target_type"] == "categorical_preference":
+        lines = ["predicted %s, actual %s (%s)" % (
+            result["predicted_option"], result["actual_option"],
+            "correct" if result["top1_correct"] else "incorrect",
+        )]
+    else:
+        lines = ["predicted %.2f, actual first-pass %d, error %+.2f (%s)"
+                 % (result["predicted_acceptance"], result["actual_first_pass"],
+                    result["error"], result["direction"])]
     if result["friction_hits"]:
         lines.append("  foreseen:  %s" % ", ".join(result["friction_hits"]))
     if result["friction_misses"]:
@@ -910,6 +1095,17 @@ def cmd_predictions(args):
             ("actual %.2f (%s)" % (row["actual_acceptance"], row["direction"]))
             if row["resolved"] else "UNRESOLVED"))
     return _emit(args, data, text="\n".join(lines))
+
+
+def cmd_calibration(args):
+    metrics = MetricsStore(_home(args)).refresh(_store(args))
+    calibration = metrics.get("calibration") or {}
+    return _emit(args, calibration, text=(
+        "%d binary sample(s): Brier %s, log loss %s, ECE %s; top-1 %s"
+        % (calibration.get("samples", 0), calibration.get("brier_score"),
+           calibration.get("log_loss"), calibration.get("expected_calibration_error"),
+           calibration.get("top1_preference_accuracy"))
+    ))
 
 
 def cmd_contradictions(args):
@@ -1064,10 +1260,22 @@ def _anonymise(payload):
             "status": row.get("status"),
         }
 
-    def numeric_tree(obj):
+    dynamic_key_containers = {
+        "by_domain", "by_mode", "corrections_by_scope", "style_effectiveness",
+        "parameters",
+    }
+
+    def numeric_tree(obj, pseudonymise_keys=False):
         if isinstance(obj, dict):
-            return {str(k): numeric_tree(v) for k, v in obj.items()
-                    if isinstance(v, (dict, list, bool, int, float)) or v is None}
+            out = {}
+            for key, value in obj.items():
+                if not (isinstance(value, (dict, list, bool, int, float)) or value is None):
+                    continue
+                safe_key = pseudonym(key, "key") if pseudonymise_keys else str(key)
+                out[safe_key] = numeric_tree(
+                    value, pseudonymise_keys=str(key) in dynamic_key_containers
+                )
+            return out
         if isinstance(obj, list):
             return [numeric_tree(v) for v in obj
                     if isinstance(v, (dict, list, bool, int, float)) or v is None]
@@ -1127,6 +1335,45 @@ def _anonymise(payload):
     return out
 
 
+def _create_snapshot(home, prefix="manual"):
+    import shutil
+
+    root = Path(home) / "backups"
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = utc_now().replace(":", "").replace("-", "")
+    destination = root / ("%s-%s" % (prefix, stamp))
+    counter = 1
+    while destination.exists():
+        destination = root / ("%s-%s-%d" % (prefix, stamp, counter))
+        counter += 1
+    destination.mkdir(parents=True)
+    included = []
+    for name in (
+        "user.json", "intent-graph.json", "metrics.json", "config.json", "runtime_context.json",
+        "events-manifest.json", "events", "archives", "checkpoints", "sessions",
+        "projects", "learning",
+    ):
+        source = Path(home) / name
+        if source.is_dir():
+            shutil.copytree(source, destination / name)
+            included.append(name + "/")
+        elif source.is_file():
+            shutil.copy2(source, destination / name)
+            included.append(name)
+    manifest = {
+        "created_at": utc_now(), "liwm_version": __version__, "source": str(home),
+        "included": included,
+        "restore_note": (
+            "Restore only with an LIWM-aware agent. Prefer `liwm rollback` for profile state; "
+            "a raw snapshot restore must preserve unrelated current data."
+        ),
+    }
+    write_json_atomic(destination / "manifest.json", manifest)
+    if not (destination / "manifest.json").is_file():  # pragma: no cover
+        raise OSError("snapshot manifest was not persisted")
+    return destination, included
+
+
 def cmd_reset(args):
     store = _store(args)
     home = store.home
@@ -1135,28 +1382,37 @@ def cmd_reset(args):
             sys.stderr.write("refusing to hard-reset without --yes\n")
             return EXIT_USAGE
         import shutil
-        backup = Path(home) / "backups" / ("pre-reset-%s" % utc_now().replace(":", ""))
-        backup.mkdir(parents=True, exist_ok=True)
-        for name in ("user.json", "metrics.json", "runtime_context.json"):
-            src = Path(home) / name
-            if src.is_file():
-                shutil.copy2(src, backup / name)
-        for name in ("events", "sessions", "projects", "learning"):
-            src = Path(home) / name
-            if src.is_dir():
-                shutil.rmtree(src)
-        for name in ("user.json", "metrics.json", "runtime_context.json"):
-            src = Path(home) / name
-            if src.is_file():
-                src.unlink()
-        ensure_layout(home)
+        with FileLock(lifecycle_lock_path(home), timeout=30.0):
+            with FileLock(store.events.lock_path, timeout=30.0):
+                backup, included = _create_snapshot(home, prefix="pre-reset")
+                required = {"events/", "projects/", "learning/"}
+                present = {name for name in included if name in required}
+                for name in (
+                    "events", "archives", "checkpoints", "sessions", "projects", "learning",
+                ):
+                    src = Path(home) / name
+                    if src.is_dir():
+                        shutil.rmtree(src)
+                for name in (
+                    "user.json", "intent-graph.json", "metrics.json", "runtime_context.json",
+                    "events-manifest.json",
+                ):
+                    src = Path(home) / name
+                    if src.is_file():
+                        src.unlink()
+                ensure_layout(home)
         profile = ProfileStore(home).rebuild(reason="hard_reset")
+        from .intent_graph import IntentGraphStore
+        IntentGraphStore(home).rebuild()
         return _emit(args, {"reset": "hard", "backup": str(backup),
+                            "backup_included": included, "source_dirs_backed_up": sorted(present),
                             "revision": profile["revision"]},
                      text="hard reset complete; a snapshot is in %s" % backup)
 
     store.events.record("reset", "direct_user_message", payload={"type": "soft"})
     profile = store.rebuild(reason="soft_reset")
+    from .intent_graph import IntentGraphStore
+    IntentGraphStore(home).rebuild()
     return _emit(args, {"reset": "soft", "revision": profile["revision"]},
                  text="soft reset: prior events retained for audit but removed from active state")
 
@@ -1176,8 +1432,11 @@ def cmd_delete(args):
     marker_text = marker.read_text(encoding="utf-8") if marker.is_file() else ""
     if "private LIWM" not in marker_text or not (home / "events").is_dir():
         raise ValueError("target does not look like an initialized LIWM home: %s" % home)
-    files = sum(1 for path in home.rglob("*") if path.is_file())
-    shutil.rmtree(home)
+    with FileLock(lifecycle_lock_path(home), timeout=30.0):
+        files = sum(1 for path in home.rglob("*") if path.is_file())
+        shutil.rmtree(home)
+        if home.exists():  # pragma: no cover - defensive against unusual filesystems
+            raise OSError("LIWM home still exists after deletion: %s" % home)
     return _emit(args, {"deleted": str(home), "files_removed": files, "recoverable": False},
                  text="permanently deleted %s (%d files); no LIWM backup was retained"
                       % (home, files))
@@ -1203,6 +1462,8 @@ def cmd_rollback(args):
         return EXIT_USAGE
     cutoff = _validate_cutoff(args.as_of)
     event, profile = _store(args).rollback(cutoff, reason=args.reason, session_id=args.session)
+    from .intent_graph import IntentGraphStore
+    IntentGraphStore(_home(args)).rebuild()
     branch = profile["materialized_from"].get("active_branch")
     return _emit(
         args,
@@ -1219,8 +1480,6 @@ def cmd_rollback(args):
 
 def cmd_backup(args):
     """Create or inspect full local snapshots without interpreting their data."""
-    import shutil
-
     home = _home(args)
     root = Path(home) / "backups"
     root.mkdir(parents=True, exist_ok=True)
@@ -1236,35 +1495,7 @@ def cmd_backup(args):
             entries.append({"name": path.name, "kind": kind, "bytes": size})
         return _emit(args, {"backups": entries, "directory": str(root)})
 
-    stamp = utc_now().replace(":", "").replace("-", "")
-    destination = root / ("manual-%s" % stamp)
-    counter = 1
-    while destination.exists():
-        destination = root / ("manual-%s-%d" % (stamp, counter))
-        counter += 1
-    destination.mkdir(parents=True)
-    included = []
-    for name in (
-        "user.json", "metrics.json", "config.json", "runtime_context.json",
-        "events", "sessions", "projects", "learning",
-    ):
-        source = Path(home) / name
-        if source.is_dir():
-            shutil.copytree(source, destination / name)
-            included.append(name + "/")
-        elif source.is_file():
-            shutil.copy2(source, destination / name)
-            included.append(name)
-    write_json_atomic(destination / "manifest.json", {
-        "created_at": utc_now(),
-        "liwm_version": __version__,
-        "source": str(home),
-        "included": included,
-        "restore_note": (
-            "Restore only with an LIWM-aware agent. Prefer `liwm rollback` for profile state; "
-            "a raw snapshot restore must preserve unrelated current data."
-        ),
-    })
+    destination, included = _create_snapshot(home)
     return _emit(args, {"path": str(destination), "included": included},
                  text="created full local snapshot %s" % destination)
 
@@ -1272,6 +1503,8 @@ def cmd_backup(args):
 def cmd_rebuild(args):
     store = _store(args)
     profile = store.rebuild(reason=args.reason or "manual", as_of=args.as_of)
+    from .intent_graph import IntentGraphStore
+    IntentGraphStore(store.home).rebuild()
     return _emit(args, {
         "revision": profile["revision"],
         "beliefs": len(profile["beliefs"]),
@@ -1281,23 +1514,41 @@ def cmd_rebuild(args):
                profile["revision"]))
 
 
+def cmd_compact(args):
+    from .compaction import compact
+
+    result = compact(_store(args))
+    return _emit(args, result, text=(
+        "compacted %d event(s) through sequence %d; raw history retained in %s"
+        % (result["events"], result["frontier"], result["archive"])
+        if result.get("compacted") else result.get("reason", "nothing to compact")
+    ))
+
+
 def cmd_verify(args):
+    from .compaction import verify_checkpoints
+
     store = _store(args)
     schema_store = SchemaStore()
     profile = store.load()
     integrity = store.events.verify()
     schema_errors = schema_store.validate(profile, "user")
     state_documents = _validate_state_documents(store.home, schema_store, include_events=True)
-    folded = store.fold()
-    drift = folded["materialized_from"]["fold_hash"] != profile["materialized_from"].get("fold_hash")
+    checkpoints = verify_checkpoints(store.home)
+    folded = store.fold() if integrity["ok"] else None
+    drift = bool(folded) and (
+        folded["materialized_from"]["fold_hash"] != profile["materialized_from"].get("fold_hash")
+    )
     data = {
         "event_integrity": integrity,
         "schema_errors": schema_errors,
         "state_document_validation": state_documents,
+        "checkpoints": checkpoints,
         "constitution_hash": constitution_hash(),
         "constitution_matches": profile.get("constitution_hash") == constitution_hash(),
         "materialisation_drift": drift,
-        "ok": integrity["ok"] and not schema_errors and state_documents["ok"] and not drift,
+        "ok": integrity["ok"] and checkpoints["ok"] and not schema_errors
+              and state_documents["ok"] and not drift,
     }
     lines = [
         "events: %d checked, %d tampered, %d unreadable"
@@ -1385,6 +1636,20 @@ def cmd_retro(args):
 
 
 def cmd_eval(args):
+    if args.action == "intentbench":
+        from .evaluation.intentbench import load_suite, run_intentbench
+        result = run_intentbench(load_suite(args.cases), adapter=args.adapter)
+        metrics = result["metrics"]
+        return _emit(
+            args, result,
+            text=("IntentBench %s [%s]\n  adapter %s, %d cases\n"
+                  "  top-1 %.3f  Brier %.3f  log loss %.3f\n  %s") % (
+                      result["suite_id"], result["result_label"], result["adapter"],
+                      result["cases"], metrics["top1_accuracy"],
+                      metrics["mean_brier_score"], metrics["mean_log_loss"],
+                      result["caveat"],
+                  ),
+        )
     if args.action == "converge":
         from .evaluation import run_convergence_study
         result = run_convergence_study(args.archetype, rounds=args.rounds, seed=args.seed,
@@ -1417,6 +1682,23 @@ def cmd_eval(args):
         lines.append("  distinguishable: %s" % json.dumps(result["distinguishable"]))
         result.pop("temp_home", None)
         return _emit(args, result, text="\n".join(lines))
+    return EXIT_USAGE
+
+
+def cmd_study(args):
+    from .study import export_study, set_study_enabled, study_status
+    home = _home(args)
+    if args.action == "status":
+        result = study_status(home)
+        return _emit(args, result, text="study mode %s; local only; no automatic upload"
+                     % ("on" if result["enabled"] else "off"))
+    if args.action in {"on", "off"}:
+        result = set_study_enabled(home, args.action == "on")
+        return _emit(args, result, text="study mode %s" % args.action)
+    if args.action == "export":
+        result = export_study(home, out=args.out, anonymise=args.anonymise)
+        return _emit(args, result, text="local study export written to %s; inspect before sharing"
+                     % result["path"])
     return EXIT_USAGE
 
 
@@ -1522,6 +1804,19 @@ def build_parser():
     s.add_argument("--block", help="path to the bootstrap block, for budget checking")
     s.set_defaults(func=cmd_hosts)
 
+    for command, actions in (("install", ["plan", "apply", "verify", "repair"]),
+                             ("uninstall", ["plan", "apply", "verify"])):
+        s = sub.add_parser(command, help="%s LIWM host integration safely" % command)
+        s.add_argument("action", choices=actions)
+        s.add_argument("--host", help="host id used when creating a plan")
+        s.add_argument("--block", help="bootstrap block file (install plan only)")
+        s.add_argument("--plan", help="serialized plan file")
+        s.add_argument("--output", help="where to write a new plan")
+        s.add_argument("--skills-source", help="override LIWM skills source directory")
+        s.add_argument("--no-skills", action="store_true",
+                       help="manage only the host instruction block")
+        s.set_defaults(func=cmd_installation)
+
     s = sub.add_parser("profile", help="show the profile quality report")
     s.add_argument("--section", help="show one raw section of user.json")
     s.add_argument("--raw", action="store_true", help="dump the whole profile")
@@ -1555,6 +1850,54 @@ def build_parser():
     s.add_argument("--project")
     s.add_argument("--domain")
     s.set_defaults(func=cmd_observe)
+
+    def add_observation_args(parser, sources, provenance=None):
+        parser.add_argument("--dimension", required=True)
+        parser.add_argument("--value", required=True)
+        if len(sources) == 1:
+            parser.set_defaults(source=next(iter(sources)))
+        else:
+            parser.add_argument("--source", choices=sorted(sources), default=sorted(sources)[0])
+        if provenance == "untrusted":
+            parser.add_argument(
+                "--provenance", required=True,
+                choices=sorted(k for k, v in PROVENANCE_TRUST.items() if v == 0.0),
+            )
+        parser.add_argument("--scope", default="global",
+                            choices=["global", "domain", "project", "session"])
+        parser.add_argument("--scope-key", dest="scope_key")
+        parser.add_argument("--polarity", default="support", choices=["support", "oppose"])
+        parser.add_argument("--decay", default="standard",
+                            choices=["none", "slow", "standard", "volatile", "session"])
+        parser.add_argument("--note")
+        parser.add_argument("--session")
+        parser.add_argument("--project")
+        parser.add_argument("--domain")
+        parser.add_argument("--derived-from", action="append",
+                            help="upstream provenance label; repeatable and taint-propagating")
+        parser.set_defaults(func=cmd_observe_intent)
+
+    add_observation_args(
+        sub.add_parser("observe-user", help="record evidence directly stated by the user"),
+        {"explicit_statement", "explicit_correction", "explicit_rejection",
+         "comparative_choice", "repeated_selection"},
+    )
+    add_observation_args(
+        sub.add_parser("observe-edit", help="record a direct user edit"), {"direct_edit"}
+    )
+    add_observation_args(
+        sub.add_parser("observe-review", help="record an explicit user review"),
+        {"explicit_statement", "explicit_correction", "explicit_rejection",
+         "comparative_choice", "repeated_selection"},
+    )
+    add_observation_args(
+        sub.add_parser("observe-inference", help="record a bounded agent inference"),
+        {"agent_inference", "single_behavioral", "repeated_behavioral", "outcome_signal"},
+    )
+    add_observation_args(
+        sub.add_parser("observe-untrusted", help="record quarantined evidence for audit"),
+        set(SOURCE_WEIGHTS), provenance="untrusted",
+    )
 
     s = sub.add_parser("feedback", help="record user feedback on an artifact")
     s.add_argument("--kind", required=True, choices=sorted(FEEDBACK_KINDS))
@@ -1631,6 +1974,48 @@ def build_parser():
     s.add_argument("--raw", action="store_true")
     s.set_defaults(func=cmd_project)
 
+    s = sub.add_parser("intent", help="inspect or mutate the intent state graph")
+    s.set_defaults(func=cmd_intent)
+    intent_sub = s.add_subparsers(dest="intent_action", required=True)
+    intent_graph = intent_sub.add_parser("graph", help="show the active graph")
+    intent_graph.add_argument("--scope", choices=["global", "domain", "project", "session"])
+    intent_graph.add_argument("--scope-key", dest="scope_key")
+    intent_graph.add_argument("--include-quarantined", action="store_true")
+    intent_explain = intent_sub.add_parser("explain", help="explain one node or edge")
+    intent_explain.add_argument("id")
+    intent_trace = intent_sub.add_parser("trace", help="trace upstream evidence and intent")
+    intent_trace.add_argument("id")
+
+    def add_intent_mutation_args(parser, types):
+        parser.add_argument("--type", required=True, choices=sorted(types))
+        parser.add_argument("--origin", required=True,
+                            choices=["user", "edit", "review", "inference"])
+        parser.add_argument("--confidence", required=True, type=float)
+        parser.add_argument("--scope", default="global",
+                            choices=["global", "domain", "project", "session"])
+        parser.add_argument("--scope-key", dest="scope_key")
+        parser.add_argument("--evidence", action="append",
+                            help="event or graph-element id; repeatable")
+        parser.add_argument("--status", default="active", choices=[
+            "active", "hypothesis", "validated", "falsified", "superseded", "rejected",
+        ])
+        parser.add_argument("--decay", default="standard",
+                            choices=["none", "slow", "standard", "volatile", "session"])
+        parser.add_argument("--session")
+        parser.add_argument("--project")
+        parser.add_argument("--domain")
+        parser.set_defaults(func=cmd_intent)
+
+    from .intent_graph import EDGE_TYPES, NODE_TYPES
+    intent_node = intent_sub.add_parser("node", help="record one typed intent node")
+    add_intent_mutation_args(intent_node, NODE_TYPES)
+    intent_node.add_argument("--label", required=True)
+    intent_node.add_argument("--value", help="JSON scalar/object, otherwise text")
+    intent_edge = intent_sub.add_parser("edge", help="record one typed intent edge")
+    add_intent_mutation_args(intent_edge, EDGE_TYPES)
+    intent_edge.add_argument("--source", required=True)
+    intent_edge.add_argument("--target", required=True)
+
     s = sub.add_parser("why", help="explain a belief, decision or dimension")
     s.add_argument("query", nargs="?")
     s.add_argument("--project")
@@ -1659,10 +2044,28 @@ def build_parser():
     s.add_argument("--domain")
     s.set_defaults(func=cmd_predict)
 
+    s = sub.add_parser("predict-preference", help="predict a preferred option before choice")
+    s.add_argument("--option", action="append", required=True,
+                   help="LABEL=PROBABILITY; repeat at least twice and sum to 1")
+    s.add_argument("--confidence", type=float, required=True)
+    s.add_argument("--basis", action="append")
+    s.add_argument("--artifact")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
+    s.set_defaults(func=cmd_predict_preference)
+
     s = sub.add_parser("resolve", help="score an earlier prediction against reality")
     s.add_argument("--prediction", required=True, help="prediction id from liwm predict")
-    s.add_argument("--acceptance", type=float, required=True,
+    s.add_argument("--acceptance", type=float,
                    help="acceptance actually observed, 0..1")
+    s.add_argument("--actual-option", dest="actual_option")
+    s.add_argument("--evaluator", default="agent_recorded",
+                   choices=["agent_recorded", "synthetic_replay", "historical_counterfactual_estimate",
+                            "observed_human_outcome", "external_evaluator",
+                            "benchmark_ground_truth"])
+    s.add_argument("--evidence-event",
+                   help="later trusted user event required for observed_human_outcome")
     s.add_argument("--friction", action="append",
                    help="friction actually observed; repeatable")
     s.add_argument("--session")
@@ -1675,6 +2078,9 @@ def build_parser():
                    help="show only predictions that were never scored")
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(func=cmd_predictions)
+
+    s = sub.add_parser("calibration", help="show proper prediction scoring and reliability")
+    s.set_defaults(func=cmd_calibration)
 
     s = sub.add_parser("contradictions", help="list contradictions in the profile")
     s.set_defaults(func=cmd_contradictions)
@@ -1746,6 +2152,9 @@ def build_parser():
     s.add_argument("action", choices=["create", "list"])
     s.set_defaults(func=cmd_backup)
 
+    s = sub.add_parser("compact", help="archive live events with a verified checkpoint")
+    s.set_defaults(func=cmd_compact)
+
     s = sub.add_parser("verify", help="verify integrity, schema and materialisation")
     s.set_defaults(func=cmd_verify)
 
@@ -1766,12 +2175,21 @@ def build_parser():
     s.set_defaults(func=cmd_retro)
 
     s = sub.add_parser("eval", help="run local evaluation studies")
-    s.add_argument("action", choices=["converge", "modes"])
+    s.add_argument("action", choices=["converge", "modes", "intentbench"])
     s.add_argument("--archetype", default="impatient_technical_expert")
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)
     s.add_argument("--mode", default="auto")
+    s.add_argument("--cases", help="IntentBench suite JSON (defaults to synthetic smoke cases)")
+    s.add_argument("--adapter", choices=["liwm-projection", "static-first"],
+                   default="liwm-projection")
     s.set_defaults(func=cmd_eval)
+
+    s = sub.add_parser("study", help="manage opt-in local research exports")
+    s.add_argument("action", choices=["status", "on", "off", "export"])
+    s.add_argument("--out")
+    s.add_argument("--anonymise", action="store_true")
+    s.set_defaults(func=cmd_study)
 
     s = sub.add_parser("schema", help="list or validate against shipped JSON schemas")
     s.add_argument("action", choices=["list", "validate"])

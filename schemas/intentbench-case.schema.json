@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/intentbench-case.schema.json",
+  "title": "IntentBench case suite",
+  "type": "object",
+  "required": ["suite_id", "dataset_kind", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "suite_id": { "type": "string", "minLength": 1 },
+    "dataset_kind": { "enum": ["synthetic", "human_anonymised"] },
+    "description": { "type": "string" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["case_id", "task_type", "exposed_to_liwm", "hidden_ground_truth", "candidate_outputs", "observed_choice"],
+      "additionalProperties": false,
+      "properties": {
+        "case_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+        "task_type": {
+          "enum": ["preference_prediction", "cross_domain_transfer", "question_selection", "traceability", "scope_contamination", "poisoning_resistance"]
+        },
+        "exposed_to_liwm": { "type": "object", "additionalProperties": true },
+        "hidden_ground_truth": {
+          "type": "object",
+          "required": ["preferred_candidate"],
+          "additionalProperties": true,
+          "properties": { "preferred_candidate": { "type": "string" } }
+        },
+        "candidate_outputs": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": true,
+            "properties": { "id": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "observed_choice": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

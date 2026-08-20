@@ -13,7 +13,7 @@ from helpers import LiwmTestCase
 from liwm.evaluation import ARCHETYPES, make_user, run_convergence_study, run_mode_study
 from liwm.evaluation.harness import belief_accuracy
 from liwm.evaluation.replay import replay_candidate, replay_episodes
-from liwm.selfimprove import CandidateRule, SelfImprovementStore
+from liwm.selfimprove import CandidateRule, GUARDED_METRICS, SelfImprovementStore
 
 
 class TestSimulators(unittest.TestCase):
@@ -135,7 +135,7 @@ class TestReplayAndGating(LiwmTestCase):
             })
         return episodes
 
-    def _record_observed_outcomes(self, n=6):
+    def _record_observed_outcomes(self, n=6, candidate_id=None):
         """Resolve *n* real predictions so the observed-outcome gate is satisfied.
 
         Replay alone cannot promote anything: it scores a candidate against an
@@ -147,9 +147,31 @@ class TestReplayAndGating(LiwmTestCase):
         from liwm.prediction import make_prediction, record_prediction, resolve_prediction
 
         for i in range(n):
-            prediction = make_prediction(predicted_acceptance=0.7, confidence=0.6)
+            prediction = make_prediction(
+                predicted_acceptance=0.7, confidence=0.6, candidate_id=candidate_id
+            )
             record_prediction(self.store, prediction, session_id="s%d" % i)
-            resolve_prediction(self.store, prediction["id"], 0.75, session_id="s%d" % i)
+            feedback = self.store.events.record(
+                "feedback", "direct_user_message",
+                payload={"channel": "explicit", "acceptance": 0.9},
+                session_id="s%d" % i,
+            )
+            resolve_prediction(
+                self.store, prediction["id"], 0.9, session_id="s%d" % i,
+                evaluator_type="observed_human_outcome",
+                evidence_event_id=feedback["event_id"],
+            )
+
+    @staticmethod
+    def _independent_results(si, candidate):
+        si.attach_benchmark(candidate["id"], {
+            "passed": True, "candidate_id": candidate["id"],
+            "evaluator_type": "benchmark_ground_truth",
+        })
+        si.attach_adversarial(candidate["id"], {
+            "passed": True, "failures": [], "candidate_id": candidate["id"],
+            "suite_id": "liwm-adversarial-v1",
+        })
 
     def test_replay_prefers_a_policy_that_drops_wasted_questions(self):
         episodes = self._episodes()
@@ -179,10 +201,12 @@ class TestReplayAndGating(LiwmTestCase):
         self.assertEqual(candidate["state"], "constitution_checked")
 
         replay = replay_candidate(self._episodes(), candidate)
+        for metric in GUARDED_METRICS:
+            replay["guarded_deltas"].setdefault(metric, 0.0)
         self.assertGreater(replay["primary_delta"], 0)
         si.attach_replay(candidate["id"], replay)
-        si.attach_adversarial(candidate["id"], {"passed": True, "failures": []})
-        self._record_observed_outcomes()
+        self._independent_results(si, candidate)
+        self._record_observed_outcomes(candidate_id=candidate["id"])
 
         promoted, verdict = si.promote(candidate["id"], store=self.store)
         self.assertTrue(verdict["passed"], verdict["reasons"])
@@ -239,9 +263,12 @@ class TestReplayAndGating(LiwmTestCase):
             ),
             store=self.store,
         )
-        si.attach_replay(candidate["id"], replay_candidate(self._episodes(), candidate))
-        si.attach_adversarial(candidate["id"], {"passed": True, "failures": []})
-        self._record_observed_outcomes()
+        replay = replay_candidate(self._episodes(), candidate)
+        for metric in GUARDED_METRICS:
+            replay["guarded_deltas"].setdefault(metric, 0.0)
+        si.attach_replay(candidate["id"], replay)
+        self._independent_results(si, candidate)
+        self._record_observed_outcomes(candidate_id=candidate["id"])
         si.promote(candidate["id"], store=self.store)
         self.assertTrue(si.revert(candidate["id"], store=self.store, reason="test"))
         self.assertEqual(si.active_rules(), [])
@@ -437,7 +464,8 @@ class TestPredictionCalibration(LiwmTestCase):
         result = resolve_prediction(self.store, prediction["id"], 0.3,
                                     observed_friction=["too terse", "wrong stack"],
                                     session_id="s1")
-        self.assertAlmostEqual(result["error"], -0.5, places=3)
+        self.assertAlmostEqual(result["error"], -0.8, places=3)
+        self.assertEqual(result["actual_first_pass"], 0)
         self.assertEqual(result["direction"], "overconfident")
         self.assertEqual(result["friction_hits"], ["too terse"])
         self.assertEqual(result["surprises"], ["wrong stack"])
@@ -452,7 +480,8 @@ class TestPredictionCalibration(LiwmTestCase):
             resolve_prediction(self.store, prediction["id"], 0.5, session_id="s%d" % i)
         metrics = compute_metrics(self.store)
         self.assertEqual(metrics["calibration"]["samples"], 4)
-        self.assertAlmostEqual(metrics["calibration"]["bias"], -0.4, places=3)
+        self.assertAlmostEqual(metrics["calibration"]["bias"], -0.9, places=3)
+        self.assertIsNotNone(metrics["calibration"]["log_loss"])
         self.assertGreater(metrics["calibration"]["brier_score"], 0)
 
 
@@ -495,7 +524,7 @@ class TestPredictionIsReachableFromTheCLI(LiwmTestCase):
 
         metrics = MetricsStore(self.home).refresh(self.store)
         self.assertEqual(metrics["calibration"]["samples"], 1)
-        self.assertAlmostEqual(metrics["calibration"]["brier_score"], 0.16, places=4)
+        self.assertAlmostEqual(metrics["calibration"]["brier_score"], 0.49, places=4)
 
     def test_an_unresolved_prediction_is_reported_as_such(self):
         import io
