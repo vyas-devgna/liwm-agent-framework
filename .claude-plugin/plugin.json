@@ -1,0 +1,13 @@
+{
+  "name": "liwm-agent-framework",
+  "version": "0.1.0",
+  "description": "Local-first, evidence-backed intent learning for agent collaboration.",
+  "author": {
+    "name": "Vyas Devgna",
+    "url": "https://github.com/vyas-devgna"
+  },
+  "homepage": "https://github.com/vyas-devgna/liwm-agent-framework",
+  "repository": "https://github.com/vyas-devgna/liwm-agent-framework",
+  "license": "MIT",
+  "keywords": ["intent", "personalization", "agent-skills", "local-first"]
+}

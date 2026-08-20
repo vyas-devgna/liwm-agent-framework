@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/event.schema.json",
+  "title": "LIWM event",
+  "description": "One immutable entry in the append-only evidence log. Events are the source of truth; user.json is derived from them.",
+  "type": "object",
+  "required": ["event_id", "schema_version", "ts", "kind", "provenance"],
+  "additionalProperties": true,
+  "properties": {
+    "event_id": { "type": "string", "pattern": "^evt_[0-9a-f]{8,}$" },
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "ts": { "type": "string", "format": "date-time" },
+    "kind": {
+      "enum": [
+        "observation", "correction", "rejection", "belief_endorsed",
+        "question_asked", "question_answered", "question_skipped",
+        "mode_selected", "assumption_made",
+        "prediction", "artifact", "feedback", "outcome", "decision",
+        "project_intent_update",
+        "scope_promotion", "scope_demotion", "strategy_update",
+        "candidate_rule", "rule_promoted", "rule_rejected", "retrospective",
+        "session_start", "session_end",
+        "onboarding_started", "onboarding_answer", "onboarding_completed",
+        "refusal", "forget", "reset", "rollback", "export", "migration"
+      ]
+    },
+    "actor": { "type": "string" },
+    "provenance": {
+      "enum": [
+        "direct_user_message", "direct_user_edit", "explicit_user_review",
+        "onboarding_answer", "agent_inference", "tool_output",
+        "repository_content", "external_document", "web_content",
+        "mcp_result", "subagent_report", "synthetic_test", "other"
+      ],
+      "description": "Where this evidence came from. Only direct_user_message, direct_user_edit, explicit_user_review, onboarding_answer and agent_inference carry non-zero trust; everything else is recorded but quarantined."
+    },
+    "derived_from": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Provenance labels of upstream material. Taint propagates: the minimum trust in the chain wins."
+    },
+    "session_id": { "type": ["string", "null"] },
+    "project_id": { "type": ["string", "null"] },
+    "domain": { "type": ["string", "null"] },
+    "payload": { "type": "object" },
+    "quarantined": { "type": "boolean" },
+    "quarantine_reason": { "type": ["string", "null"] },
+    "integrity": {
+      "type": "object",
+      "properties": {
+        "algo": { "const": "sha256" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["algo", "hash"],
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": ["dimension", "source_type", "polarity", "scope"],
+      "additionalProperties": true,
+      "properties": {
+        "dimension": { "type": "string", "minLength": 1 },
+        "value": {},
+        "polarity": { "enum": ["support", "oppose"] },
+        "source_type": {
+          "enum": [
+            "explicit_statement", "explicit_correction", "explicit_rejection",
+            "direct_edit", "repeated_selection", "comparative_choice",
+            "onboarding_answer", "repeated_behavioral", "outcome_signal",
+            "single_behavioral", "agent_inference"
+          ]
+        },
+        "scope": { "enum": ["global", "domain", "project", "session"] },
+        "scope_key": { "type": ["string", "null"] },
+        "decay_policy": { "enum": ["none", "slow", "standard", "volatile", "session"] },
+        "weight_override": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "note": { "type": ["string", "null"] },
+        "ts": { "type": "string" },
+        "provenance": { "type": "string" },
+        "derived_from": { "type": "array" },
+        "session_id": { "type": ["string", "null"] }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "quarantined": { "const": true } }, "required": ["quarantined"] },
+      "then": { "required": ["quarantine_reason"] }
+    }
+  ]
+}

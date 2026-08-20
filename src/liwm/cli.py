@@ -1,0 +1,1696 @@
+"""``liwm`` command-line interface.
+
+The primary consumer of this CLI is an *agent*, not a human, so every command
+supports ``--json`` for machine parsing while defaulting to a compact
+human-readable form for the terminal.
+
+The CLI is the only sanctioned way for a skill to mutate LIWM state.  That
+matters: it means the provenance gate, the privacy gate, atomic writes and the
+event log cannot be bypassed by a model deciding to edit ``user.json`` directly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import sys
+from pathlib import Path
+
+from . import __version__
+from .constitution import INVARIANTS, constitution_hash
+from .config import ConfigStore
+from .context import build_runtime_context, write_runtime_context
+from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, SOURCE_WEIGHTS, TRUSTED_PROVENANCE
+from .events import EVENT_KINDS, EventStore
+from .feedback import FEEDBACK_KINDS, record_feedback
+from .hosts import detect_hosts
+from .jsonio import read_json_resilient, utc_now, write_json_atomic
+from .metrics import MetricsStore
+from .migrate import CURRENT_SCHEMA_VERSION, migrate_home
+from .modes import MODE_PROFILES, Signals, mode_profile, resolve_auto
+from .onboarding import OnboardingSession
+from .paths import ensure_layout, is_inside_git_repo, liwm_home
+from .privacy import redact
+from .profile import ProfileStore
+from .projects import INTENT_SECTIONS, ProjectStore, slugify_project
+from .questions import QuestionPlanner
+from .report import profile_report, render_text
+from .scope import resolve_for_context
+from .schema import SchemaStore, validate
+from .selfimprove import SelfImprovementStore
+from .strategy import StrategyStore
+from .traceability import recent_assumptions, why
+
+__all__ = ["main", "build_parser"]
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_USAGE = 2
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _emit(args, data, text=None):
+    if getattr(args, "json", False) or text is None:
+        sys.stdout.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    else:
+        sys.stdout.write(text.rstrip("\n") + "\n")
+    return EXIT_OK
+
+
+def _home(args):
+    return ensure_layout(getattr(args, "home", None) or None)
+
+
+def _store(args):
+    return ProfileStore(_home(args))
+
+
+def _learning_guard(args, operation):
+    config = ConfigStore(_home(args)).load()
+    if not config.get("enabled", True):
+        return _emit(args, {"skipped": True, "operation": operation,
+                            "reason": "LIWM is off"},
+                     text="LIWM is off; %s was not recorded" % operation)
+    if not config.get("learning_enabled", True):
+        return _emit(args, {"skipped": True, "operation": operation,
+                            "reason": "learning is disabled"},
+                     text="LIWM learning is disabled; %s was not recorded" % operation)
+    return None
+
+
+def _signals(args):
+    raw = getattr(args, "signals", None)
+    data = {}
+    if raw:
+        try:
+            data = json.loads(raw)
+        except ValueError as exc:
+            raise SystemExit("--signals must be JSON: %s" % exc)
+    for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
+                "specification_completeness", "recent_correction_rate", "fatigue"):
+        value = getattr(args, key, None)
+        if value is not None:
+            data[key] = value
+    if getattr(args, "stage", None):
+        data["project_stage"] = args.stage
+    return data
+
+
+def _validate_state_documents(home, schema_store, include_events=False):
+    specs = [
+        (Path(home) / "config.json", "config"),
+        (Path(home) / "metrics.json", "metrics"),
+        (Path(home) / "runtime_context.json", "runtime-context"),
+        (Path(home) / "learning" / "personal-strategy.json", "personal-strategy"),
+    ]
+    specs.extend((p, "project-intent") for p in (Path(home) / "projects").glob("*/intent.json"))
+    for directory in ("candidate-rules", "rejected-rules"):
+        specs.extend((p, "candidate-rule") for p in
+                     (Path(home) / "learning" / directory).glob("*.json"))
+    if include_events:
+        specs.extend((p, "event") for p in (Path(home) / "events").rglob("*.json"))
+    errors = {}
+    checked = 0
+    for path, schema_name in specs:
+        if not path.is_file():
+            continue
+        checked += 1
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            found = schema_store.validate(document, schema_name)
+            if found:
+                errors[str(path)] = found[:20]
+        except Exception as exc:  # noqa: BLE001 - health-check boundary
+            errors[str(path)] = [{"path": "", "message": str(exc)}]
+    return {"checked": checked, "errors": errors, "ok": not errors}
+
+
+# ---------------------------------------------------------------------------
+# commands
+# ---------------------------------------------------------------------------
+
+def cmd_init(args):
+    target = Path(args.home).expanduser().absolute() if args.home else liwm_home()
+    if is_inside_git_repo(target) and not args.allow_in_repo:
+        sys.stderr.write(
+            "refusing to initialise a LIWM profile inside a git repository (%s).\n"
+            "Personal data must live outside version control. Use --allow-in-repo only for tests.\n"
+            % target
+        )
+        return EXIT_ERROR
+    home = ensure_layout(target)
+    store = ProfileStore(home)
+    created = not store.exists()
+    if created:
+        store.events.record(
+            "session_start", "direct_user_message",
+            payload={"action": "init", "liwm_version": __version__},
+        )
+    profile = store.rebuild(reason="init")
+    MetricsStore(home).refresh(store)
+    StrategyStore(home).load()
+    ConfigStore(home).load(persist=True)
+    data = {
+        "home": str(home),
+        "created": created,
+        "profile_id": profile["profile_id"],
+        "revision": profile["revision"],
+        "schema_version": profile["schema_version"],
+        "onboarding": profile["onboarding"]["status"],
+        "constitution_hash": constitution_hash(),
+        "inside_git_repo": is_inside_git_repo(home),
+    }
+    return _emit(args, data, text=(
+        "LIWM home %s (%s)\nprofile %s rev %d, onboarding: %s"
+        % (home, "created" if created else "already present", profile["profile_id"],
+           profile["revision"], profile["onboarding"]["status"])
+    ))
+
+
+
+def _supports_symlinks(home):
+    """Can this filesystem hold a symlink?
+
+    Windows only permits them under Developer Mode or an elevated shell, and
+    some network and container filesystems refuse them everywhere.  The
+    installer needs the answer before it decides whether to link the skills
+    directory or copy it, so LIWM tests it rather than guessing from the OS
+    name.
+    """
+    probe = Path(home) / (".liwm-symlink-probe-%d" % os.getpid())
+    try:
+        probe.symlink_to(Path(home))
+        return True
+    except (OSError, NotImplementedError, AttributeError):
+        return False
+    finally:
+        try:
+            if probe.is_symlink() or probe.exists():
+                probe.unlink()
+        except OSError:  # pragma: no cover
+            pass
+
+
+def _case_sensitive(home):
+    """Is this filesystem case-sensitive?
+
+    macOS and Windows are usually not, which matters because skill directory
+    names are part of a host's lookup key: on a case-insensitive volume
+    ``liwm-profile`` and ``LIWM-Profile`` are the same directory, and an
+    installer that assumed otherwise would clobber one with the other.
+    """
+    lower = Path(home) / (".liwm-case-probe-%d" % os.getpid())
+    upper = Path(home) / (".LIWM-CASE-PROBE-%d" % os.getpid())
+    try:
+        lower.write_text("probe", encoding="utf-8")
+        return not upper.exists()
+    except OSError:  # pragma: no cover
+        return True
+    finally:
+        try:
+            lower.unlink()
+        except OSError:  # pragma: no cover
+            pass
+
+
+def cmd_doctor(args):
+    home = _home(args)
+    store = ProfileStore(home)
+    schema_store = SchemaStore()
+    profile = store.load()
+    integrity = store.events.verify()
+    state_documents = _validate_state_documents(home, schema_store)
+    host_rows = detect_hosts(home)
+    errors = []
+
+    try:
+        errors = schema_store.validate(profile, "user")
+    except FileNotFoundError as exc:
+        errors = [{"path": "", "message": str(exc)}]
+
+    checks = {
+        "home_exists": home.is_dir(),
+        "home_outside_git": not is_inside_git_repo(home),
+        "profile_readable": profile is not None,
+        "profile_schema_valid": not errors,
+        "state_documents_valid": state_documents["ok"],
+        "event_integrity_ok": integrity["ok"],
+        "constitution_hash_matches": profile.get("constitution_hash") == constitution_hash(),
+        "schema_version_current": profile.get("schema_version") == CURRENT_SCHEMA_VERSION,
+        "config_present": (home / "config.json").is_file(),
+        "recovery_note": store.last_recovery_note,
+    }
+    data = {
+        "liwm_version": __version__,
+        "home": str(home),
+        "checks": checks,
+        "schema_errors": errors[:10],
+        "state_document_validation": state_documents,
+        "event_integrity": integrity,
+        "events": store.events.stats(),
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "python": platform.python_version(),
+            "implementation": platform.python_implementation(),
+            "supports_symlinks": _supports_symlinks(home),
+            "filesystem_case_sensitive": _case_sensitive(home),
+        },
+        "hosts": host_rows,
+        "hosts_detected": [row["id"] for row in host_rows if row["detected"]],
+        "agents_skills_dir": str(Path.home() / ".agents" / "skills"),
+        "healthy": all(v for k, v in checks.items() if isinstance(v, bool)),
+    }
+    lines = ["LIWM %s  home=%s" % (__version__, home)]
+    for key, value in checks.items():
+        if isinstance(value, bool):
+            lines.append("  [%s] %s" % ("ok" if value else "!!", key))
+        elif value:
+            lines.append("  [--] %s: %s" % (key, value))
+    if errors:
+        lines.append("  schema errors:")
+        for err in errors[:5]:
+            lines.append("    %s: %s" % (err["path"] or "/", err["message"]))
+    lines.append("  [--] platform: %s %s, Python %s" % (
+        data["platform"]["system"], data["platform"]["release"],
+        data["platform"]["python"]))
+    present = [row for row in data["hosts"] if row["detected"]]
+    if present:
+        for row in present:
+            lines.append("  [%s] host %s%s" % (
+                "ok" if row["liwm_installed"] else "--", row["id"],
+                "" if row["liwm_installed"] else " (present, LIWM not installed)"))
+    else:
+        lines.append("  [--] no supported agent host detected (liwm hosts list)")
+    return _emit(args, data, text="\n".join(lines))
+
+
+def cmd_config(args):
+    store = ConfigStore(_home(args))
+    if args.action == "show":
+        data = store.load(persist=True)
+        return _emit(args, data)
+    if args.action == "set":
+        if not args.key:
+            raise ValueError("config set requires --key")
+        value = _coerce(args.value)
+        data = store.set(args.key, value)
+        selected = data
+        for part in args.key.split("."):
+            selected = selected[part]
+        return _emit(args, data, text="%s = %s" % (args.key, selected))
+    return EXIT_USAGE
+
+
+def cmd_integration(args):
+    """Manage non-personal host installation metadata atomically."""
+    store = ConfigStore(_home(args))
+    if args.action == "show":
+        hosts = store.load(persist=True).get("hosts", {})
+        return _emit(args, {"hosts": hosts})
+    if not args.host:
+        raise ValueError("integration %s requires --host" % args.action)
+    if args.action == "remove":
+        removed = store.remove_host(args.host)
+        return _emit(args, {"host": args.host, "removed": removed is not None},
+                     text="removed integration metadata for %s" % args.host)
+    required = {
+        "framework_checkout": args.framework_checkout,
+        "cli_command": args.cli_command,
+        "skills_path": args.skills_path,
+        "install_method": args.install_method,
+        "bootstrap_file": args.bootstrap_file,
+        "bootstrap_version": args.bootstrap_version,
+        "liwm_version": __version__,
+        "installed_at": utc_now(),
+    }
+    missing = [key for key, value in required.items() if value is None]
+    if missing:
+        raise ValueError("integration register missing: %s" % ", ".join(missing))
+    data = store.register_host(args.host, required)
+    return _emit(args, {"host": args.host, "metadata": data["hosts"][args.host]},
+                 text="registered %s integration" % args.host)
+
+
+def cmd_hosts(args):
+    """List, detect, or plan installation into supported agent hosts."""
+    from .hosts import USER_REGISTRY_FILENAME, detect_hosts, installation_plan, load_registry
+
+    home = _home(args)
+
+    if args.action == "plan":
+        if not args.host:
+            raise ValueError("hosts plan requires --host (see: liwm hosts list)")
+        block = ""
+        if args.block:
+            block = Path(args.block).expanduser().read_text(encoding="utf-8")
+        plan = installation_plan(args.host, home=home, block_text=block)
+        if plan is None:
+            raise ValueError("unknown host %r (see: liwm hosts list)" % args.host)
+        lines = ["installation plan for %s:" % plan["name"]]
+        for step in plan["steps"]:
+            lines.append("  %-14s %s" % (step["action"], step["path"] or "(no file)"))
+            lines.append("                 %s" % step["detail"])
+        budget = plan["budget"]
+        if budget["budget_bytes"] is not None:
+            lines.append("  budget         %d of %d bytes used%s" % (
+                budget["total_bytes"], budget["budget_bytes"],
+                "" if budget["within_budget"] else "  ** OVER BUDGET **"))
+        return _emit(args, plan, text="\n".join(lines))
+
+    rows = detect_hosts(home)
+    if args.action == "detect":
+        rows = [row for row in rows if row["detected"]]
+
+    data = {
+        "hosts": rows,
+        "detected": [row["id"] for row in rows if row["detected"]],
+        "user_registry": str(Path(home) / USER_REGISTRY_FILENAME),
+        "count": len(load_registry(home)),
+    }
+    if not rows:
+        return _emit(args, data, text="no supported agent host detected on this machine")
+
+    lines = []
+    for row in rows:
+        flags = []
+        if row["detected"]:
+            flags.append("present")
+        if row["liwm_installed"]:
+            flags.append("liwm-installed")
+        if row["supports_skills"]:
+            flags.append("skills")
+        if row["source"] != "builtin":
+            flags.append(row["source"])
+        lines.append("%-16s %-28s %s" % (row["id"], row["name"],
+                                         ", ".join(flags) or "-"))
+        target = row["global_instruction_file"] or (
+            "project files: " + ", ".join(row["project_instruction_files"][:2]))
+        lines.append("                 %s" % target)
+    lines.append("")
+    lines.append("Teach LIWM another host by adding it to %s"
+                 % (Path(home) / USER_REGISTRY_FILENAME))
+    return _emit(args, data, text="\n".join(lines))
+
+
+def cmd_profile(args):
+    store = _store(args)
+    profile = store.load()
+    if args.section:
+        data = profile.get(args.section)
+        if data is None:
+            sys.stderr.write("no such section %r\n" % args.section)
+            return EXIT_ERROR
+        return _emit(args, {args.section: data})
+    if args.raw:
+        return _emit(args, profile)
+    report = profile_report(
+        store,
+        metrics=MetricsStore(store.home).load(),
+        strategy=StrategyStore(store.home).load(),
+        promoted_rules=SelfImprovementStore(store.home).active_rules(),
+    )
+    return _emit(args, report, text=render_text(report))
+
+
+def cmd_context(args):
+    store = _store(args)
+    strategy = StrategyStore(store.home)
+    kwargs = dict(
+        domain=args.domain,
+        project_id=args.project,
+        task=args.task,
+        mode=args.mode,
+        signals=_signals(args),
+        strategy=strategy.load(),
+        promoted_rules=SelfImprovementStore(store.home).active_rules(),
+    )
+    if args.write:
+        context, path = write_runtime_context(store, **kwargs)
+        context["_written_to"] = str(path)
+    else:
+        context = build_runtime_context(store, **kwargs)
+    lines = [
+        "mode: %s (%s, budget %s)" % (
+            context["mode"]["effective"], context["mode"]["resolved_from"],
+            context["mode"]["question_budget"]),
+        context["mode"].get("rationale") or "",
+        "profile maturity %.2f, %d applicable beliefs"
+        % (context["profile_maturity"], len(context["applies"])),
+    ]
+    for item in context["applies"][:10]:
+        lines.append("  %-44s %-18s %.2f [%s]" % (
+            item["dimension"], str(item["value"])[:18], item["confidence"], item["scope"]))
+    return _emit(args, context, text="\n".join(lines))
+
+
+def cmd_observe(args):
+    guarded = _learning_guard(args, "observation")
+    if guarded is not None:
+        return guarded
+    store = _store(args)
+    if args.provenance not in PROVENANCE_TRUST:
+        sys.stderr.write("unknown provenance %r; expected one of: %s\n"
+                         % (args.provenance, ", ".join(sorted(PROVENANCE_TRUST))))
+        return EXIT_USAGE
+    event, profile = store.observe(
+        args.dimension,
+        _coerce(args.value),
+        source_type=args.source,
+        provenance=args.provenance,
+        scope=args.scope,
+        scope_key=args.scope_key,
+        polarity=args.polarity,
+        decay_policy=args.decay,
+        note=args.note,
+        session_id=args.session,
+        project_id=args.project,
+        domain=args.domain,
+    )
+    belief = next(
+        (b for b in profile["beliefs"]
+         if b["dimension"] == args.dimension and str(b["value"]) == str(_coerce(args.value))
+         and b["scope"] == args.scope),
+        None,
+    )
+    data = {
+        "event_id": event["event_id"],
+        "kind": event["kind"],
+        "quarantined": event.get("quarantined", False),
+        "quarantine_reason": event.get("quarantine_reason"),
+        "profile_revision": profile["revision"],
+        "belief": belief,
+    }
+    if event.get("quarantined"):
+        text = ("recorded but QUARANTINED (%s) - this can never influence the profile"
+                % event.get("quarantine_reason"))
+    elif event.get("kind") == "refusal":
+        text = "REFUSED by the privacy gate (%s)" % (event.get("payload") or {}).get("category")
+    elif belief:
+        text = "%s = %s -> confidence %.2f (%s, %d observation(s))" % (
+            belief["dimension"], belief["value"], belief["confidence"],
+            belief["scope"], belief["evidence_count"])
+    else:
+        text = "recorded %s" % event["event_id"]
+    return _emit(args, data, text=text)
+
+
+def _coerce(value):
+    if value is None:
+        return None
+    lowered = str(value).strip().lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    if str(value).lstrip().startswith(("[", "{")):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def cmd_feedback(args):
+    guarded = _learning_guard(args, "feedback")
+    if guarded is not None:
+        return guarded
+    store = _store(args)
+    if args.kind not in FEEDBACK_KINDS:
+        sys.stderr.write("unknown feedback kind %r; expected one of: %s\n"
+                         % (args.kind, ", ".join(sorted(FEEDBACK_KINDS))))
+        return EXIT_USAGE
+    extra = []
+    if args.observation:
+        for raw in args.observation:
+            try:
+                extra.append(json.loads(raw))
+            except ValueError as exc:
+                sys.stderr.write("--observation must be JSON: %s\n" % exc)
+                return EXIT_USAGE
+    record = record_feedback(
+        store, args.kind, channel=args.channel, text=args.text,
+        project_id=args.project, domain=args.domain, session_id=args.session,
+        artifact=args.artifact, decision_id=args.decision, prediction_id=args.prediction,
+        global_intent=args.global_intent, extra_observations=extra,
+        custom_acceptance=args.acceptance,
+        provenance=args.provenance, derived_from=args.derived_from,
+    )
+    return _emit(args, record, text=(
+        "recorded %s feedback (%s), acceptance %s, %s"
+        % (record["kind"], record["channel"], record["acceptance"], record["scope_note"])
+    ))
+
+
+def cmd_mode(args):
+    signals = _signals(args)
+    config = ConfigStore(_home(args)).load()
+    if not config.get("enabled", True):
+        contract = mode_profile("off")
+        contract["resolved_from"] = "config"
+        contract["rationale"] = "LIWM is persistently disabled"
+    elif args.mode and args.mode != "auto":
+        contract = mode_profile(args.mode)
+        contract["resolved_from"] = "explicit"
+    else:
+        store = _store(args)
+        low, high = StrategyStore(store.home).auto_thresholds()
+        profile = store.load()
+        from .fatigue import profile_maturity
+        signals.setdefault("profile_maturity", profile_maturity(profile))
+        contract = resolve_auto(Signals(**signals), thresholds=(low, high))
+    return _emit(args, contract, text=(
+        "%s | budget %s | experiential %.0f%% | %s"
+        % (contract["mode"].upper(), contract["max_questions"],
+           100 * contract.get("experiential_ratio", 0),
+           contract.get("rationale") or contract.get("summary", ""))
+    ))
+
+
+def cmd_plan(args):
+    store = _store(args)
+    profile = store.load()
+    resolved = resolve_for_context(profile.get("beliefs", []), domain=args.domain,
+                                   project_id=args.project, min_confidence=0.0)
+    config = ConfigStore(store.home).load()
+    if not config.get("enabled", True):
+        contract = mode_profile("off")
+    elif args.mode == "auto":
+        low, high = StrategyStore(store.home).auto_thresholds()
+        signals = _signals(args)
+        from .fatigue import profile_maturity
+        signals.setdefault("profile_maturity", profile_maturity(profile))
+        contract = resolve_auto(Signals(**signals), thresholds=(low, high))
+    else:
+        contract = mode_profile(args.mode)
+    qconfig = config.get("questioning", {})
+    contract = dict(contract)
+    contract["max_questions"] = min(
+        int(contract.get("max_questions", 0)),
+        int(qconfig.get("max_questions_per_session", 12)),
+    )
+    never = set(qconfig.get("never_ask_about") or [])
+    from .question_bank import QUESTION_BANK
+    bank = [q for q in QUESTION_BANK if not never.intersection(q.get("resolves", []))]
+    planner = QuestionPlanner(contract, resolved=resolved,
+                              strategy=StrategyStore(store.home).load(), bank=bank)
+    requested_budget = args.max_questions if args.max_questions is not None \
+        else contract.get("max_questions")
+    plan = planner.plan(
+        misunderstanding_risk=args.risk,
+        fatigue=args.fatigue,
+        max_questions=min(requested_budget, contract.get("max_questions")),
+    )
+    data = {
+        "mode": contract["mode"],
+        "budget": contract.get("max_questions"),
+        "questions": plan,
+        "stopped_because": (
+            "no question cleared the %s-mode utility threshold %.2f"
+            % (contract["mode"], contract.get("min_utility", 0))
+            if not plan else None
+        ),
+    }
+    if plan:
+        lines = ["%s mode - %d question(s) worth asking:" % (contract["mode"].upper(), len(plan))]
+        for i, q in enumerate(plan, 1):
+            lines.append("  %d. [%s, u=%.2f] %s" % (i, q["style"], q["utility"], q["text"]))
+            lines.append("       %s" % q["why"])
+    else:
+        lines = ["No question clears the bar. Make a reversible assumption, state it, "
+                 "and learn from the reaction."]
+    return _emit(args, data, text="\n".join(lines))
+
+
+def cmd_onboarding(args):
+    store = _store(args)
+    session = OnboardingSession(store, session_id=args.session or "onboarding")
+    if args.action == "status":
+        return _emit(args, session.state())
+    guarded = _learning_guard(args, "onboarding")
+    if guarded is not None:
+        return guarded
+    if args.action == "start":
+        session.start()
+        return _emit(args, session.state(), text="onboarding started - ask one question at a time")
+    if args.action == "next":
+        q = session.next_question()
+        if q is None:
+            return _emit(args, {"done": True}, text="onboarding complete - run `liwm onboarding complete`")
+        return _emit(args, q, text="Q%d/%d [%s/%s]  %s"
+                     % (q["position"], q["of"], q["style"], q["family"], q["text"]))
+    if args.action == "answer":
+        observations = []
+        for raw in args.observation or []:
+            try:
+                observations.append(json.loads(raw))
+            except ValueError as exc:
+                sys.stderr.write("--observation must be JSON: %s\n" % exc)
+                return EXIT_USAGE
+        profile = session.record_answer(args.question_id, args.text, observations=observations)
+        return _emit(args, {"revision": profile["revision"], "recorded": len(observations)},
+                     text="recorded %d observation(s)" % len(observations))
+    if args.action == "complete":
+        profile = session.complete(summary=args.text)
+        state = session.state()
+        return _emit(args, {"onboarding": profile["onboarding"], "state": state},
+                     text="onboarding complete: %d questions, %d families covered"
+                          % (state["answered"], state["families_covered"]))
+    if args.action == "correct":
+        profile = session.correct(args.dimension, args.value, reason=args.text)
+        return _emit(args, {"revision": profile["revision"]}, text="correction recorded")
+    return EXIT_USAGE
+
+
+def cmd_project(args):
+    store = _store(args)
+    project_id = slugify_project(args.project or Path.cwd())
+    ps = ProjectStore(store.home, project_id)
+
+    if args.action == "show":
+        return _emit(args, ps.load_intent() if args.raw else ps.summary())
+    if args.action not in ("show", "delete"):
+        guarded = _learning_guard(args, "project intent")
+        if guarded is not None:
+            return guarded
+    if args.action == "init":
+        doc = ps.load_intent(name=args.name, domain=args.domain)
+        doc["domain"] = args.domain or doc.get("domain")
+        doc["name"] = args.name or doc.get("name")
+        ps.save_intent(doc)
+        store.events.record("project_intent_update", "direct_user_message",
+                            payload={"action": "init", "project_id": project_id},
+                            project_id=project_id, domain=args.domain)
+        return _emit(args, ps.summary(), text="project %s initialised" % project_id)
+    if args.action == "add":
+        if args.section not in INTENT_SECTIONS:
+            sys.stderr.write("unknown section %r; expected one of: %s\n"
+                             % (args.section, ", ".join(INTENT_SECTIONS)))
+            return EXIT_USAGE
+        item = ps.add(args.section, args.text, args.origin,
+                      confidence=args.confidence, evidence_refs=args.evidence or [])
+        project_provenance = {
+            "USER_SAID": "direct_user_message",
+            "AGENT_INFERRED": "agent_inference",
+            "AGENT_DERIVED": "tool_output",
+        }[args.origin]
+        store.events.record("project_intent_update", project_provenance,
+                            payload={"action": "add", "section": args.section,
+                                     "item_id": item["id"], "origin": args.origin},
+                            project_id=project_id, domain=args.domain)
+        return _emit(args, item, text="%s <- [%s] %s" % (args.section, args.origin, args.text))
+    if args.action == "stage":
+        doc = ps.set_stage(args.text)
+        return _emit(args, {"stage": doc["stage"]}, text="stage: %s" % doc["stage"])
+    if args.action == "decision":
+        entry = ps.record_decision(
+            args.text, rationale=args.rationale, basis=args.evidence or [],
+            alternatives=args.alternative or [], artifact=args.artifact,
+            reversible=not args.irreversible, impact=args.impact,
+        )
+        store.events.record("decision", "agent_inference",
+                            payload={"decision_id": entry["id"], "summary": args.text,
+                                     "basis": entry["basis"], "impact": args.impact},
+                            project_id=project_id, domain=args.domain)
+        return _emit(args, entry, text="decision %s recorded" % entry["id"])
+    if args.action == "delete":
+        removed = ps.delete()
+        store.forget(project_id=project_id)
+        return _emit(args, {"removed": removed, "project_id": project_id},
+                     text="removed project %s and tombstoned its evidence" % project_id)
+    return EXIT_USAGE
+
+
+def cmd_why(args):
+    store = _store(args)
+    result = why(store, args.query, project_id=args.project)
+    if result["result"] is None:
+        return _emit(args, result, text="nothing recorded for %r" % args.query)
+    return _emit(args, result, text=_render_why(result))
+
+
+def _render_why(result):
+    kind, payload = result["type"], result["result"]
+    lines = []
+    if kind == "belief":
+        b = payload["belief"]
+        lines.append("%s = %s  (confidence %.2f, %s scope)"
+                     % (b["dimension"], b["value"], b["confidence"], b["scope"]))
+        lines.append(payload["confidence_explanation"])
+        if payload["supporting_evidence"]:
+            lines.append("supporting:")
+            for e in payload["supporting_evidence"][-5:]:
+                lines.append("  %s  %-22s %s" % (e["at"][:19], e["source_type"] or e["kind"],
+                                                 (e["quote"] or "")[:60]))
+        if payload["opposing_evidence"]:
+            lines.append("contradicting:")
+            for e in payload["opposing_evidence"][-3:]:
+                lines.append("  %s  %-22s %s" % (e["at"][:19], e["source_type"] or e["kind"],
+                                                 (e["quote"] or "")[:60]))
+        if payload.get("ignored_note"):
+            lines.append(payload["ignored_note"])
+    elif kind == "decision":
+        d = payload["decision"]
+        lines.append("decision %s: %s" % (d["id"], d["summary"]))
+        lines.append("rationale: %s" % (d.get("rationale") or "(none recorded)"))
+        for b in payload["basis_detail"]:
+            lines.append("  based on %s %s" % (b["type"], b["ref"]))
+        lines.append(payload["completeness"])
+    elif kind == "dimension":
+        lines.append("views on %s:" % payload["dimension"])
+        for v in payload["views"]:
+            lines.append("  %-8s %-16s %-18s %.2f  (%s)"
+                         % (v["scope"], v.get("scope_key") or "-", str(v["value"])[:18],
+                            v["confidence"], v["status"]))
+        lines.append(payload["note"])
+    else:
+        lines.append("recent assumptions:")
+        for a in payload:
+            lines.append("  %s  disclosed=%s  %s"
+                         % (a["at"][:19], a["disclosed"], a["assumption"]))
+    return "\n".join(lines)
+
+
+def cmd_stats(args):
+    store = _store(args)
+    ms = MetricsStore(store.home)
+    metrics = ms.refresh(store) if args.refresh else (ms.load() or ms.refresh(store))
+    lines = ["LIWM metrics (computed %s)" % metrics.get("computed_at")]
+    for key, value in (metrics.get("rates") or {}).items():
+        if value is not None:
+            lines.append("  %-38s %s" % (key, value))
+    cal = metrics.get("calibration") or {}
+    if cal.get("samples"):
+        lines.append("  %-38s %s samples, brier %s, bias %s"
+                     % ("calibration", cal["samples"], cal.get("brier_score"), cal.get("bias")))
+    imp = metrics.get("improvement") or {}
+    lines.append("  %-38s %s (delta %s)" % ("trend", imp.get("verdict"), imp.get("delta")))
+    sec = metrics.get("security") or {}
+    lines.append("  %-38s %s quarantined, %s privacy refusals"
+                 % ("security", sec.get("quarantined_events"), sec.get("privacy_refusals")))
+    return _emit(args, metrics, text="\n".join(lines))
+
+
+def cmd_contradictions(args):
+    store = _store(args)
+    profile = store.load()
+    items = profile.get("contradictions", [])
+    lines = ["%d contradiction(s)" % len(items)]
+    for c in items:
+        vals = " vs ".join("%s (%s, %.2f)" % (k["value"], k["scope"], k["confidence"])
+                           for k in c["candidates"])
+        lines.append("  %-42s %s" % (c["dimension"], vals))
+        lines.append("      type=%s  %s" % (c["type"], c["suggested_resolution"]))
+    return _emit(args, {"contradictions": items}, text="\n".join(lines))
+
+
+def cmd_assumptions(args):
+    store = _store(args)
+    items = recent_assumptions(store, project_id=args.project, limit=args.limit)
+    lines = ["%d recent assumption(s)" % len(items)]
+    for a in items:
+        lines.append("  %s  disclosed=%-5s impact=%-6s %s"
+                     % (a["at"][:19], a["disclosed"], a["impact"], a["assumption"]))
+    return _emit(args, {"assumptions": items}, text="\n".join(lines))
+
+
+def cmd_assume(args):
+    guarded = _learning_guard(args, "assumption")
+    if guarded is not None:
+        return guarded
+    store = _store(args)
+    event = store.events.record(
+        "assumption_made", "agent_inference",
+        payload={"assumption": args.text, "reversible": not args.irreversible,
+                 "impact": args.impact, "disclosed": args.disclosed,
+                 "basis": args.evidence or []},
+        session_id=args.session, project_id=args.project, domain=args.domain,
+    )
+    return _emit(args, {"event_id": event["event_id"]}, text="assumption recorded")
+
+
+def cmd_reject(args):
+    store = _store(args)
+    profile = store.reject(args.dimension, value=_coerce(args.value), reason=args.reason,
+                           inference_source=args.source, session_id=args.session,
+                           scope=args.scope, scope_key=args.scope_key)
+    return _emit(args, {"revision": profile["revision"],
+                        "rejections": profile["rejections"][-3:]},
+                 text="recorded: %s is not true about you. Weak signals can no longer "
+                      "relearn it; only a direct statement from you can." % args.dimension)
+
+
+def cmd_forget(args):
+    store = _store(args)
+    if not any((args.dimension, args.belief, args.project)):
+        sys.stderr.write("specify --dimension, --belief or --project\n")
+        return EXIT_USAGE
+    profile = store.forget(dimension=args.dimension, belief_key_=args.belief,
+                           project_id=args.project, session_id=args.session)
+    return _emit(args, {"revision": profile["revision"],
+                        "beliefs": len(profile["beliefs"])},
+                 text="forgotten; history retained for audit, effect removed")
+
+
+def cmd_export(args):
+    store = _store(args)
+    profile = store.load()
+    payload = {
+        "exported_at": utc_now(),
+        "liwm_version": __version__,
+        "schema_version": profile.get("schema_version"),
+        "profile": profile,
+        "metrics": MetricsStore(store.home).load(),
+        "strategy": StrategyStore(store.home).load(),
+        "promoted_rules": SelfImprovementStore(store.home).promoted_rules(),
+    }
+    if args.include_events:
+        payload["events"] = store.events.read_all(include_quarantined=True)
+    anonymise = bool(
+        args.anonymise
+        or ConfigStore(store.home).load().get("privacy", {}).get("redact_exports_by_default")
+    )
+    if anonymise:
+        payload = _anonymise(payload)
+    out = Path(args.out).expanduser() if args.out else (
+        Path(store.home) / "exports" / ("liwm-export-%s.json" % utc_now().replace(":", "")))
+    write_json_atomic(out, payload)
+    store.events.record("export", "direct_user_message",
+                        payload={"path": str(out), "anonymised": anonymise,
+                                 "included_events": bool(args.include_events)})
+    return _emit(args, {"path": str(out), "bytes": out.stat().st_size,
+                        "anonymised": anonymise},
+                 text="exported to %s" % out)
+
+
+def _anonymise(payload):
+    """Build an allowlisted research export with no arbitrary free text.
+
+    This intentionally does not recursively "scrub" the original document.
+    Denylists miss new fields. Instead, each released field is selected here,
+    identifiers receive unlinkable per-export pseudonyms, and unconstrained
+    values become a literal redaction marker regardless of their length.
+    """
+    import hashlib
+    import uuid
+    from .taxonomy import DIMENSION_INDEX, dimension_meta
+
+    salt = uuid.uuid4().hex
+
+    def pseudonym(value, prefix="anon"):
+        if value is None:
+            return None
+        digest = hashlib.sha256((salt + "\0" + str(value)).encode("utf-8")).hexdigest()[:12]
+        return "%s_%s" % (prefix, digest)
+
+    def safe_dimension(value):
+        if value in DIMENSION_INDEX:
+            return value
+        root = str(value or "").split(".", 1)[0]
+        if root in {"preferences", "anti_preferences", "goals", "anti_goals",
+                    "expectations", "domain_fluency"}:
+            return root + ".<redacted>"
+        return "<redacted>"
+
+    def safe_value(dimension, value):
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        allowed = set(dimension_meta(dimension).get("values") or ())
+        if isinstance(value, str) and value in allowed:
+            return value
+        if isinstance(value, list) and all(
+                isinstance(v, str) and v in allowed for v in value):
+            return value
+        return "<redacted>"
+
+    def belief_row(row):
+        dimension = row.get("dimension")
+        return {
+            "id": pseudonym(row.get("id"), "belief"),
+            "scope": row.get("scope"),
+            "scope_key": pseudonym(row.get("scope_key"), "scope"),
+            "dimension": safe_dimension(dimension),
+            "value": safe_value(dimension, row.get("value")),
+            "confidence": row.get("confidence"),
+            "evidence_count": row.get("evidence_count"),
+            "contradiction_count": row.get("contradiction_count"),
+            "source_types": [s for s in row.get("source_types", [])
+                             if s in SOURCE_WEIGHTS or s == "promotion"],
+            "provenance_types": [p for p in row.get("provenance_types", [])
+                                  if p in PROVENANCE_TRUST or p == "derived"],
+            "decay_policy": row.get("decay_policy"),
+            "origin": row.get("origin"),
+            "status": row.get("status"),
+        }
+
+    def numeric_tree(obj):
+        if isinstance(obj, dict):
+            return {str(k): numeric_tree(v) for k, v in obj.items()
+                    if isinstance(v, (dict, list, bool, int, float)) or v is None}
+        if isinstance(obj, list):
+            return [numeric_tree(v) for v in obj
+                    if isinstance(v, (dict, list, bool, int, float)) or v is None]
+        return obj if isinstance(obj, (bool, int, float)) or obj is None else None
+
+    profile = payload.get("profile") or {}
+    onboarding = profile.get("onboarding") or {}
+    out = {
+        "anonymised": True,
+        "export_format": "liwm-research-allowlist-v1",
+        "liwm_version": payload.get("liwm_version"),
+        "schema_version": payload.get("schema_version"),
+        "profile": {
+            "profile_id": pseudonym(profile.get("profile_id"), "profile"),
+            "revision": profile.get("revision"),
+            "onboarding": {
+                "status": onboarding.get("status"),
+                "questions_asked": onboarding.get("questions_asked"),
+                "dimensions_covered": [safe_dimension(d) for d in
+                                       onboarding.get("dimensions_covered", [])],
+            },
+            "beliefs": [belief_row(row) for row in profile.get("beliefs", [])],
+            "statistics_summary": numeric_tree(profile.get("statistics_summary", {})),
+            "confidence_calibration": numeric_tree(profile.get("confidence_calibration", {})),
+        },
+        "metrics": numeric_tree(payload.get("metrics", {})),
+        "strategy": numeric_tree(payload.get("strategy", {})),
+        "promoted_rules": {
+            "rules": [
+                {
+                    "id": pseudonym(rule.get("id"), "rule"),
+                    "active": bool(rule.get("active")),
+                    "parameters": numeric_tree(rule.get("parameters", {})),
+                }
+                for rule in (payload.get("promoted_rules") or {}).get("rules", [])
+            ]
+        },
+        "anonymisation_note": (
+            "Allowlisted structural and numeric research data only. Arbitrary strings, "
+            "raw answers, notes, project text, paths, timestamps, and artifact content removed."
+        ),
+    }
+    if "events" in payload:
+        out["events"] = [
+            {
+                "event_id": pseudonym(event.get("event_id"), "event"),
+                "kind": event.get("kind") if event.get("kind") in EVENT_KINDS
+                        else "other",
+                "provenance": event.get("provenance")
+                if event.get("provenance") in PROVENANCE_TRUST else "other",
+                "quarantined": bool(event.get("quarantined")),
+                "observation": belief_row(event["observation"])
+                if event.get("observation") else None,
+            }
+            for event in payload.get("events", [])
+        ]
+    return out
+
+
+def cmd_reset(args):
+    store = _store(args)
+    home = store.home
+    if args.hard:
+        if not args.yes:
+            sys.stderr.write("refusing to hard-reset without --yes\n")
+            return EXIT_USAGE
+        import shutil
+        backup = Path(home) / "backups" / ("pre-reset-%s" % utc_now().replace(":", ""))
+        backup.mkdir(parents=True, exist_ok=True)
+        for name in ("user.json", "metrics.json", "runtime_context.json"):
+            src = Path(home) / name
+            if src.is_file():
+                shutil.copy2(src, backup / name)
+        for name in ("events", "sessions", "projects", "learning"):
+            src = Path(home) / name
+            if src.is_dir():
+                shutil.rmtree(src)
+        for name in ("user.json", "metrics.json", "runtime_context.json"):
+            src = Path(home) / name
+            if src.is_file():
+                src.unlink()
+        ensure_layout(home)
+        profile = ProfileStore(home).rebuild(reason="hard_reset")
+        return _emit(args, {"reset": "hard", "backup": str(backup),
+                            "revision": profile["revision"]},
+                     text="hard reset complete; a snapshot is in %s" % backup)
+
+    store.events.record("reset", "direct_user_message", payload={"type": "soft"})
+    profile = store.rebuild(reason="soft_reset")
+    return _emit(args, {"reset": "soft", "revision": profile["revision"]},
+                 text="soft reset: prior events retained for audit but removed from active state")
+
+
+def cmd_delete(args):
+    """Irrecoverably remove one validated LIWM private-data root."""
+    if not args.yes:
+        sys.stderr.write("refusing complete private-data deletion without --yes\n")
+        return EXIT_USAGE
+    import shutil
+
+    home = Path(getattr(args, "home", None) or liwm_home()).expanduser().resolve()
+    forbidden = {Path("/").resolve(), Path.home().resolve(), Path.cwd().resolve()}
+    if home in forbidden:
+        raise ValueError("refusing unsafe deletion target %s" % home)
+    marker = home / "README.txt"
+    marker_text = marker.read_text(encoding="utf-8") if marker.is_file() else ""
+    if "private LIWM" not in marker_text or not (home / "events").is_dir():
+        raise ValueError("target does not look like an initialized LIWM home: %s" % home)
+    files = sum(1 for path in home.rglob("*") if path.is_file())
+    shutil.rmtree(home)
+    return _emit(args, {"deleted": str(home), "files_removed": files, "recoverable": False},
+                 text="permanently deleted %s (%d files); no LIWM backup was retained"
+                      % (home, files))
+
+
+def _validate_cutoff(value):
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("--as-of must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if parsed > datetime.now(timezone.utc):
+        raise ValueError("--as-of cannot be in the future")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def cmd_rollback(args):
+    if not args.yes:
+        sys.stderr.write("refusing to change the active event branch without --yes\n")
+        return EXIT_USAGE
+    cutoff = _validate_cutoff(args.as_of)
+    event, profile = _store(args).rollback(cutoff, reason=args.reason, session_id=args.session)
+    branch = profile["materialized_from"].get("active_branch")
+    return _emit(
+        args,
+        {
+            "event_id": event["event_id"],
+            "revision": profile["revision"],
+            "beliefs": len(profile["beliefs"]),
+            "active_branch": branch,
+            "skipped_events": profile["materialized_from"].get("skipped_by_branch", 0),
+        },
+        text="rolled active state back to %s; skipped history remains auditable" % cutoff,
+    )
+
+
+def cmd_backup(args):
+    """Create or inspect full local snapshots without interpreting their data."""
+    import shutil
+
+    home = _home(args)
+    root = Path(home) / "backups"
+    root.mkdir(parents=True, exist_ok=True)
+    if args.action == "list":
+        entries = []
+        for path in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+            if path.is_dir():
+                size = sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+                kind = "snapshot"
+            else:
+                size = path.stat().st_size
+                kind = "automatic"
+            entries.append({"name": path.name, "kind": kind, "bytes": size})
+        return _emit(args, {"backups": entries, "directory": str(root)})
+
+    stamp = utc_now().replace(":", "").replace("-", "")
+    destination = root / ("manual-%s" % stamp)
+    counter = 1
+    while destination.exists():
+        destination = root / ("manual-%s-%d" % (stamp, counter))
+        counter += 1
+    destination.mkdir(parents=True)
+    included = []
+    for name in (
+        "user.json", "metrics.json", "config.json", "runtime_context.json",
+        "events", "sessions", "projects", "learning",
+    ):
+        source = Path(home) / name
+        if source.is_dir():
+            shutil.copytree(source, destination / name)
+            included.append(name + "/")
+        elif source.is_file():
+            shutil.copy2(source, destination / name)
+            included.append(name)
+    write_json_atomic(destination / "manifest.json", {
+        "created_at": utc_now(),
+        "liwm_version": __version__,
+        "source": str(home),
+        "included": included,
+        "restore_note": (
+            "Restore only with an LIWM-aware agent. Prefer `liwm rollback` for profile state; "
+            "a raw snapshot restore must preserve unrelated current data."
+        ),
+    })
+    return _emit(args, {"path": str(destination), "included": included},
+                 text="created full local snapshot %s" % destination)
+
+
+def cmd_rebuild(args):
+    store = _store(args)
+    profile = store.rebuild(reason=args.reason or "manual", as_of=args.as_of)
+    return _emit(args, {
+        "revision": profile["revision"],
+        "beliefs": len(profile["beliefs"]),
+        "materialized_from": profile["materialized_from"],
+    }, text="rebuilt from %d event(s) -> %d belief(s), revision %d"
+            % (profile["materialized_from"]["event_count"], len(profile["beliefs"]),
+               profile["revision"]))
+
+
+def cmd_verify(args):
+    store = _store(args)
+    schema_store = SchemaStore()
+    profile = store.load()
+    integrity = store.events.verify()
+    schema_errors = schema_store.validate(profile, "user")
+    state_documents = _validate_state_documents(store.home, schema_store, include_events=True)
+    folded = store.fold()
+    drift = folded["materialized_from"]["fold_hash"] != profile["materialized_from"].get("fold_hash")
+    data = {
+        "event_integrity": integrity,
+        "schema_errors": schema_errors,
+        "state_document_validation": state_documents,
+        "constitution_hash": constitution_hash(),
+        "constitution_matches": profile.get("constitution_hash") == constitution_hash(),
+        "materialisation_drift": drift,
+        "ok": integrity["ok"] and not schema_errors and state_documents["ok"] and not drift,
+    }
+    lines = [
+        "events: %d checked, %d tampered, %d unreadable"
+        % (integrity["checked"], integrity["tampered"], integrity["unreadable"]),
+        "schema: %d error(s)" % len(schema_errors),
+        "other state: %d document(s), %d invalid"
+        % (state_documents["checked"], len(state_documents["errors"])),
+        "materialisation drift: %s" % ("YES - run `liwm rebuild`" if drift else "none"),
+        "constitution: %s" % ("matches" if data["constitution_matches"] else "MISMATCH"),
+    ]
+    return _emit(args, data, text="\n".join(lines))
+
+
+def cmd_migrate(args):
+    store = _store(args)
+    report = migrate_home(store.home, store=store)
+    return _emit(args, report, text="migrated %d file(s), skipped %d, %d error(s)"
+                 % (len(report["migrated"]), len(report["skipped"]), len(report["errors"])))
+
+
+def cmd_rules(args):
+    store = _store(args)
+    si = SelfImprovementStore(store.home)
+    if args.action == "list":
+        candidates = si.list_candidates(state=args.state, include_rejected=args.include_rejected)
+        data = {
+            "active_rules": si.active_rules(),
+            "candidates": [
+                {"id": c["id"], "title": c["title"], "state": c["state"],
+                 "surface": c["surface"],
+                 "violations": c.get("constitution", {}).get("violations", []),
+                 "primary_delta": (c.get("replay") or {}).get("primary_delta")}
+                for c in candidates
+            ],
+        }
+        lines = ["%d active rule(s), %d candidate(s)"
+                 % (len(data["active_rules"]), len(data["candidates"]))]
+        for r in data["active_rules"]:
+            lines.append("  ACTIVE  %s  %s" % (r["id"][:16], r["statement"][:70]))
+        for c in data["candidates"]:
+            lines.append("  %-8s %s  %s" % (c["state"][:8], c["id"][:16], c["title"][:60]))
+            if c["violations"]:
+                lines.append("           blocked: %s" % "; ".join(c["violations"])[:100])
+        return _emit(args, data, text="\n".join(lines))
+
+    if args.action == "replay":
+        from .evaluation.replay import replay_candidate
+        candidate = si.read(args.id)
+        if candidate is None:
+            sys.stderr.write("no candidate %r\n" % args.id)
+            return EXIT_ERROR
+        result = replay_candidate(store.home, candidate)
+        si.attach_replay(args.id, result)
+        return _emit(args, result, text="replayed %d episode(s): primary %s delta %s"
+                     % (result["episodes"], result["primary_metric"], result["primary_delta"]))
+
+    if args.action == "promote":
+        candidate, verdict = si.promote(args.id, store=store)
+        return _emit(args, {"state": candidate["state"], "verdict": verdict},
+                     text=("promoted" if verdict["passed"]
+                           else "rejected: %s" % "; ".join(verdict["reasons"])))
+
+    if args.action == "revert":
+        changed = si.revert(args.id, store=store, reason=args.reason or "user requested")
+        return _emit(args, {"reverted": changed},
+                     text="reverted" if changed else "no active rule with that id")
+    return EXIT_USAGE
+
+
+def cmd_retro(args):
+    from .retrospective import run_retrospective
+    guarded = _learning_guard(args, "retrospective")
+    if guarded is not None:
+        return guarded
+    store = _store(args)
+    result = run_retrospective(store, args.session, project_id=args.project)
+    lines = ["retrospective for session %s" % args.session]
+    for lesson in result["lessons"]:
+        lines.append("  - %s" % lesson)
+    if result["strategy_changes"]:
+        lines.append("  strategy: %s" % json.dumps(result["strategy_changes"]))
+    for c in result["candidates"]:
+        lines.append("  candidate %s [%s] %s" % (c["id"][:16], c["state"], c["title"]))
+    return _emit(args, result, text="\n".join(lines))
+
+
+def cmd_eval(args):
+    if args.action == "converge":
+        from .evaluation import run_convergence_study
+        result = run_convergence_study(args.archetype, rounds=args.rounds, seed=args.seed,
+                                       mode=args.mode)
+        summary = result["summary"]
+        lines = [
+            "archetype %s, %d rounds (simulated - measures LIWM, not a person)"
+            % (args.archetype, args.rounds),
+            "  accuracy   %.2f -> %.2f  (gain %+.2f)"
+            % (summary["accuracy_first_round"], summary["accuracy_final_round"],
+               summary["accuracy_gain"]),
+            "  acceptance %.2f -> %.2f  (gain %+.2f)"
+            % (summary["acceptance_early"] or 0, summary["acceptance_late"] or 0,
+               summary["acceptance_gain"]),
+            "  questions  %.2f -> %.2f  (reduction %+.2f)"
+            % (summary["questions_early"] or 0, summary["questions_late"] or 0,
+               summary["questions_reduction"]),
+        ]
+        result.pop("temp_home", None)
+        return _emit(args, result, text="\n".join(lines))
+
+    if args.action == "modes":
+        from .evaluation import run_mode_study
+        result = run_mode_study()
+        lines = ["mode comparison on one fixed situation:"]
+        for mode, row in result["modes"].items():
+            lines.append("  %-7s -> %-7s budget %-3s planned %-2s experiential %s"
+                         % (mode, row["effective_mode"], row["question_budget"],
+                            row["planned"], row["experiential_share"]))
+        lines.append("  distinguishable: %s" % json.dumps(result["distinguishable"]))
+        result.pop("temp_home", None)
+        return _emit(args, result, text="\n".join(lines))
+    return EXIT_USAGE
+
+
+def cmd_schema(args):
+    schema_store = SchemaStore()
+    if args.action == "list":
+        available = {k: str(v) for k, v in schema_store.available().items()}
+        return _emit(args, available,
+                     text="\n".join("  %-22s %s" % (k, v) for k, v in sorted(available.items())))
+    if args.action == "validate":
+        data, note = read_json_resilient(args.file)
+        if data is None:
+            sys.stderr.write("cannot read %s: %s\n" % (args.file, note))
+            return EXIT_ERROR
+        errors = validate(data, schema_store.load(args.name))
+        return _emit(args, {"file": args.file, "schema": args.name, "valid": not errors,
+                            "errors": errors},
+                     text=("valid" if not errors else
+                           "\n".join("  %s: %s" % (e["path"] or "/", e["message"])
+                                     for e in errors[:20])))
+    return EXIT_USAGE
+
+
+def cmd_constitution(args):
+    data = {
+        "hash": constitution_hash(),
+        "invariant_count": len(INVARIANTS),
+        "invariants": [dict(i) for i in INVARIANTS],
+        "provenance_trust": PROVENANCE_TRUST,
+        "trusted_provenance": sorted(TRUSTED_PROVENANCE),
+        "source_weights": SOURCE_WEIGHTS,
+        "source_ceilings": SOURCE_CEILINGS,
+    }
+    lines = ["LIWM constitution (%d invariants, hash %s)"
+             % (len(INVARIANTS), constitution_hash()[:16])]
+    for inv in INVARIANTS:
+        lines.append("  %s  %s" % (inv["id"], inv["title"]))
+        if args.full:
+            lines.append("        %s" % inv["rule"])
+    return _emit(args, data, text="\n".join(lines))
+
+
+def cmd_events(args):
+    store = EventStore(_home(args))
+    if args.action == "stats":
+        return _emit(args, store.stats())
+    if args.action == "verify":
+        return _emit(args, store.verify())
+    if args.action == "tail":
+        events = store.latest(args.limit, include_quarantined=args.include_quarantined)
+        lines = []
+        for e in events:
+            lines.append("%s  %-22s %-22s %s"
+                         % (e["ts"][:19], e["kind"], e["provenance"],
+                            "QUARANTINED" if e.get("quarantined") else ""))
+        return _emit(args, {"events": events}, text="\n".join(lines))
+    return EXIT_USAGE
+
+
+# ---------------------------------------------------------------------------
+# parser
+# ---------------------------------------------------------------------------
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="liwm",
+        description="LIWM - Latent Intent World Model: a local, evidence-based intent-learning "
+                    "layer for coding agents.",
+    )
+    p.add_argument("--version", action="version", version="liwm %s" % __version__)
+    p.add_argument("--home", help="LIWM data directory (default: $LIWM_HOME or ~/.liwm)")
+    p.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    sub = p.add_subparsers(dest="command")
+
+    s = sub.add_parser("init", help="create the LIWM home directory and an empty profile")
+    s.add_argument("--allow-in-repo", action="store_true",
+                   help="permit initialisation inside a git repository (tests only)")
+    s.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("doctor", help="check installation health")
+    s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("config", help="inspect or change LIWM runtime settings")
+    s.add_argument("action", choices=["show", "set"])
+    s.add_argument("--key")
+    s.add_argument("--value")
+    s.set_defaults(func=cmd_config)
+
+    s = sub.add_parser("integration", help="manage host installation metadata")
+    s.add_argument("action", choices=["register", "show", "remove"])
+    s.add_argument("--host")
+    s.add_argument("--framework-checkout", dest="framework_checkout")
+    s.add_argument("--cli-command", dest="cli_command")
+    s.add_argument("--skills-path", dest="skills_path")
+    s.add_argument("--install-method", dest="install_method")
+    s.add_argument("--bootstrap-file", dest="bootstrap_file")
+    s.add_argument("--bootstrap-version", dest="bootstrap_version")
+    s.set_defaults(func=cmd_integration)
+
+    s = sub.add_parser("hosts", help="list, detect, or plan installation into agent hosts")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "detect", "plan"])
+    s.add_argument("--host", help="host id, e.g. claude-code, codex, gemini-cli")
+    s.add_argument("--block", help="path to the bootstrap block, for budget checking")
+    s.set_defaults(func=cmd_hosts)
+
+    s = sub.add_parser("profile", help="show the profile quality report")
+    s.add_argument("--section", help="show one raw section of user.json")
+    s.add_argument("--raw", action="store_true", help="dump the whole profile")
+    s.set_defaults(func=cmd_profile)
+
+    s = sub.add_parser("context", help="build the compact runtime context projection")
+    s.add_argument("--domain")
+    s.add_argument("--project")
+    s.add_argument("--task")
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--signals", help="JSON object of AUTO signals")
+    s.add_argument("--stage")
+    s.add_argument("--write", action="store_true", help="also write runtime_context.json")
+    for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
+                "specification_completeness", "recent_correction_rate", "fatigue"):
+        s.add_argument("--%s" % key.replace("_", "-"), dest=key, type=float)
+    s.set_defaults(func=cmd_context)
+
+    s = sub.add_parser("observe", help="record one observation about the user")
+    s.add_argument("--dimension", required=True)
+    s.add_argument("--value", required=True)
+    s.add_argument("--source", required=True, choices=sorted(SOURCE_WEIGHTS))
+    s.add_argument("--provenance", required=True, choices=sorted(PROVENANCE_TRUST))
+    s.add_argument("--scope", default="global", choices=["global", "domain", "project", "session"])
+    s.add_argument("--scope-key", dest="scope_key")
+    s.add_argument("--polarity", default="support", choices=["support", "oppose"])
+    s.add_argument("--decay", default="standard",
+                   choices=["none", "slow", "standard", "volatile", "session"])
+    s.add_argument("--note")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
+    s.set_defaults(func=cmd_observe)
+
+    s = sub.add_parser("feedback", help="record user feedback on an artifact")
+    s.add_argument("--kind", required=True, choices=sorted(FEEDBACK_KINDS))
+    s.add_argument("--channel", default="explicit",
+                   choices=["explicit", "corrective", "comparative", "repeated_comparative",
+                            "edit", "outcome", "behavioral", "repeated_behavioral"])
+    s.add_argument("--text")
+    s.add_argument("--project")
+    s.add_argument("--domain")
+    s.add_argument("--session")
+    s.add_argument("--artifact")
+    s.add_argument("--decision")
+    s.add_argument("--prediction")
+    s.add_argument("--acceptance", type=float)
+    s.add_argument("--global-intent", dest="global_intent", action="store_true",
+                   help="the user was speaking generally, not about this artifact")
+    s.add_argument("--provenance", choices=sorted(PROVENANCE_TRUST),
+                   help="true source; defaults from channel and is compatibility-checked")
+    s.add_argument("--derived-from", action="append",
+                   help="upstream provenance label; repeatable and taint-propagating")
+    s.add_argument("--observation", action="append",
+                   help="extra observation as JSON; repeatable")
+    s.set_defaults(func=cmd_feedback)
+
+    s = sub.add_parser("mode", help="resolve the operating mode")
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--signals")
+    s.add_argument("--stage")
+    for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
+                "specification_completeness", "recent_correction_rate", "fatigue"):
+        s.add_argument("--%s" % key.replace("_", "-"), dest=key, type=float)
+    s.set_defaults(func=cmd_mode)
+
+    s = sub.add_parser("plan", help="plan which questions are worth asking")
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--domain")
+    s.add_argument("--project")
+    s.add_argument("--risk", type=float, default=0.5, help="misunderstanding risk 0-1")
+    s.add_argument("--fatigue", type=float, default=0.0)
+    s.add_argument("--max-questions", dest="max_questions", type=int)
+    s.add_argument("--signals")
+    s.add_argument("--stage")
+    for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
+                "specification_completeness", "recent_correction_rate"):
+        s.add_argument("--%s" % key.replace("_", "-"), dest=key, type=float)
+    s.set_defaults(func=cmd_plan)
+
+    s = sub.add_parser("onboarding", help="run the ten-question onboarding")
+    s.add_argument("action", choices=["start", "next", "answer", "complete", "status", "correct"])
+    s.add_argument("--question-id", dest="question_id")
+    s.add_argument("--text")
+    s.add_argument("--dimension")
+    s.add_argument("--value")
+    s.add_argument("--session")
+    s.add_argument("--observation", action="append")
+    s.set_defaults(func=cmd_onboarding)
+
+    s = sub.add_parser("project", help="manage project intent")
+    s.add_argument("action", choices=["init", "show", "add", "stage", "decision", "delete"])
+    s.add_argument("--project", help="project id or path (default: cwd)")
+    s.add_argument("--name")
+    s.add_argument("--domain")
+    s.add_argument("--section", choices=list(INTENT_SECTIONS))
+    s.add_argument("--text")
+    s.add_argument("--origin", choices=["USER_SAID", "AGENT_INFERRED", "AGENT_DERIVED"],
+                   default="USER_SAID")
+    s.add_argument("--confidence", type=float)
+    s.add_argument("--evidence", action="append")
+    s.add_argument("--alternative", action="append")
+    s.add_argument("--rationale")
+    s.add_argument("--artifact")
+    s.add_argument("--impact", default="medium", choices=["low", "medium", "high"])
+    s.add_argument("--irreversible", action="store_true")
+    s.add_argument("--raw", action="store_true")
+    s.set_defaults(func=cmd_project)
+
+    s = sub.add_parser("why", help="explain a belief, decision or dimension")
+    s.add_argument("query", nargs="?")
+    s.add_argument("--project")
+    s.set_defaults(func=cmd_why)
+
+    s = sub.add_parser("stats", help="show local performance metrics")
+    s.add_argument("--refresh", action="store_true", default=True)
+    s.add_argument("--no-refresh", dest="refresh", action="store_false")
+    s.set_defaults(func=cmd_stats)
+
+    s = sub.add_parser("contradictions", help="list contradictions in the profile")
+    s.set_defaults(func=cmd_contradictions)
+
+    s = sub.add_parser("assumptions", help="list assumptions LIWM acted on")
+    s.add_argument("--project")
+    s.add_argument("--limit", type=int, default=10)
+    s.set_defaults(func=cmd_assumptions)
+
+    s = sub.add_parser("assume", help="record an assumption before acting on it")
+    s.add_argument("text")
+    s.add_argument("--impact", default="medium", choices=["low", "medium", "high"])
+    s.add_argument("--irreversible", action="store_true")
+    s.add_argument("--disclosed", action="store_true")
+    s.add_argument("--evidence", action="append")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
+    s.set_defaults(func=cmd_assume)
+
+    s = sub.add_parser("reject", help="record that a belief is not true about you")
+    s.add_argument("--dimension", required=True)
+    s.add_argument("--value")
+    s.add_argument("--reason")
+    s.add_argument("--source", help="which inference method produced it")
+    s.add_argument("--scope", default="global", choices=["global", "domain", "project"])
+    s.add_argument("--scope-key", dest="scope_key")
+    s.add_argument("--session")
+    s.set_defaults(func=cmd_reject)
+
+    s = sub.add_parser("forget", help="tombstone a dimension, belief or project")
+    s.add_argument("--dimension")
+    s.add_argument("--belief")
+    s.add_argument("--project")
+    s.add_argument("--session")
+    s.set_defaults(func=cmd_forget)
+
+    s = sub.add_parser("export", help="export the profile as JSON")
+    s.add_argument("--out")
+    s.add_argument("--include-events", action="store_true")
+    s.add_argument("--anonymise", action="store_true",
+                   help="strip free text and identifiers for research sharing")
+    s.set_defaults(func=cmd_export)
+
+    s = sub.add_parser("reset", help="reset the profile")
+    s.add_argument("--hard", action="store_true",
+                   help="reset events/projects/learning but retain a recovery snapshot")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_reset)
+
+    s = sub.add_parser("delete", help="permanently delete the entire private LIWM home")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_delete)
+
+    s = sub.add_parser("rebuild", help="re-fold user.json from the event log")
+    s.add_argument("--reason")
+    s.add_argument("--as-of", dest="as_of", help="fold only events up to this timestamp")
+    s.set_defaults(func=cmd_rebuild)
+
+    s = sub.add_parser("rollback", help="durably select an earlier event-log state")
+    s.add_argument("--as-of", dest="as_of", required=True,
+                   help="inclusive ISO-8601 cutoff timestamp")
+    s.add_argument("--reason")
+    s.add_argument("--session")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_rollback)
+
+    s = sub.add_parser("backup", help="create or list private local snapshots")
+    s.add_argument("action", choices=["create", "list"])
+    s.set_defaults(func=cmd_backup)
+
+    s = sub.add_parser("verify", help="verify integrity, schema and materialisation")
+    s.set_defaults(func=cmd_verify)
+
+    s = sub.add_parser("migrate", help="migrate stored data to the current schema")
+    s.set_defaults(func=cmd_migrate)
+
+    s = sub.add_parser("rules", help="inspect and gate self-improvement candidates")
+    s.add_argument("action", choices=["list", "replay", "promote", "revert"])
+    s.add_argument("--id")
+    s.add_argument("--state")
+    s.add_argument("--reason")
+    s.add_argument("--include-rejected", action="store_true")
+    s.set_defaults(func=cmd_rules)
+
+    s = sub.add_parser("retro", help="run a session retrospective")
+    s.add_argument("session")
+    s.add_argument("--project")
+    s.set_defaults(func=cmd_retro)
+
+    s = sub.add_parser("eval", help="run local evaluation studies")
+    s.add_argument("action", choices=["converge", "modes"])
+    s.add_argument("--archetype", default="impatient_technical_expert")
+    s.add_argument("--rounds", type=int, default=8)
+    s.add_argument("--seed", type=int, default=1337)
+    s.add_argument("--mode", default="auto")
+    s.set_defaults(func=cmd_eval)
+
+    s = sub.add_parser("schema", help="list or validate against shipped JSON schemas")
+    s.add_argument("action", choices=["list", "validate"])
+    s.add_argument("--file")
+    s.add_argument("--name", default="user")
+    s.set_defaults(func=cmd_schema)
+
+    s = sub.add_parser("constitution", help="print the immutable invariants")
+    s.add_argument("--full", action="store_true")
+    s.set_defaults(func=cmd_constitution)
+
+    s = sub.add_parser("events", help="inspect the event log")
+    s.add_argument("action", choices=["stats", "verify", "tail"])
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--include-quarantined", action="store_true")
+    s.set_defaults(func=cmd_events)
+
+    return p
+
+
+def _normalise_global_args(argv):
+    """Allow ``--json`` and ``--home`` before or after a subcommand.
+
+    Agents naturally write ``liwm context --json``.  Argparse otherwise accepts
+    global options only before ``context``, an unnecessary integration trap.
+    """
+    values = list(sys.argv[1:] if argv is None else argv)
+    front, rest = [], []
+    i = 0
+    while i < len(values):
+        item = values[i]
+        if item == "--json":
+            front.append(item)
+        elif item == "--home":
+            if i + 1 >= len(values):
+                rest.append(item)
+            else:
+                front.extend([item, values[i + 1]])
+                i += 1
+        elif item.startswith("--home="):
+            front.append(item)
+        else:
+            rest.append(item)
+        i += 1
+    return front + rest
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(_normalise_global_args(argv))
+    if not getattr(args, "command", None):
+        parser.print_help()
+        return EXIT_USAGE
+    try:
+        return args.func(args) or EXIT_OK
+    except KeyboardInterrupt:  # pragma: no cover
+        return 130
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - CLI boundary
+        if getattr(args, "json", False):
+            sys.stdout.write(json.dumps({"error": str(exc),
+                                         "type": type(exc).__name__}, indent=2) + "\n")
+        else:
+            sys.stderr.write("liwm: %s: %s\n" % (type(exc).__name__, exc))
+        return EXIT_ERROR
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

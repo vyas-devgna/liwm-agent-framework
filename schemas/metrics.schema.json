@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/metrics.schema.json",
+  "title": "LIWM metrics",
+  "description": "Local, non-telemetric measurements recomputed from the event log. Nothing here leaves the machine.",
+  "type": "object",
+  "required": ["schema_version", "computed_at", "counters"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "computed_at": { "type": ["string", "null"] },
+    "window": { "type": "integer", "minimum": 1 },
+    "span": { "type": "object" },
+    "counters": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "rates": {
+      "type": "object",
+      "additionalProperties": { "type": ["number", "null"], "minimum": 0 }
+    },
+    "calibration": {
+      "type": "object",
+      "properties": {
+        "samples": { "type": "integer", "minimum": 0 },
+        "brier_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "mean_absolute_error": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "bias": { "type": ["number", "null"], "minimum": -1, "maximum": 1 },
+        "bins": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "scope_health": { "type": "object" },
+    "by_mode": { "type": "object" },
+    "profile": { "type": "object" },
+    "improvement": {
+      "type": "object",
+      "properties": {
+        "earlier_window_mean_acceptance": { "type": ["number", "null"] },
+        "recent_window_mean_acceptance": { "type": ["number", "null"] },
+        "delta": { "type": ["number", "null"] },
+        "verdict": { "enum": ["insufficient data", "improving", "regressing", "flat"] }
+      },
+      "additionalProperties": true
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "quarantined_events": { "type": "integer", "minimum": 0 },
+        "privacy_refusals": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "interpretation_note": { "type": "string" }
+  }
+}

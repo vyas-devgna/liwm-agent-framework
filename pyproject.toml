@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liwm"
+version = "0.1.0"
+description = "LIWM - Latent Intent World Model: a persistent, evidence-based intent-learning layer for coding agents."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Vyas Devgna" }]
+keywords = [
+  "agent", "claude-code", "codex", "intent", "personalization",
+  "user-model", "agent-skills", "local-first",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+# Zero runtime dependencies is a hard design constraint: LIWM must run wherever
+# the host agent runs, with no install step beyond copying files.
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
+[project.urls]
+Homepage = "https://github.com/vyas-devgna/liwm-agent-framework"
+Repository = "https://github.com/vyas-devgna/liwm-agent-framework"
+Issues = "https://github.com/vyas-devgna/liwm-agent-framework/issues"
+Changelog = "https://github.com/vyas-devgna/liwm-agent-framework/blob/main/CHANGELOG.md"
+
+[project.scripts]
+liwm = "liwm.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+liwm = ["schemas/*.json"]
+
+[tool.setuptools.data-files]
+"share/liwm/schemas" = ["schemas/*.json"]

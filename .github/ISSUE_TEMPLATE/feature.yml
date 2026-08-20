@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose an improvement with privacy and scope implications
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or research outcome is blocked?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Provenance, privacy, scope, and agency impact
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How should success be evaluated?

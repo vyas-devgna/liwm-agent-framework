@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/candidate-rule.schema.json",
+  "title": "LIWM candidate rule (Level 4 self-improvement)",
+  "description": "A proposed behavioural change. Candidates are data, never edits to instruction files. Promotion requires a clean constitution check, replay over history, no guarded regression, and an adversarial pass.",
+  "type": "object",
+  "required": ["id", "schema_version", "created_at", "state", "title", "statement", "surface"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "string", "pattern": "^cand_" },
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "state": {
+      "enum": ["proposed", "constitution_checked", "replayed", "benchmarked",
+               "adversarial_tested", "promoted", "rejected", "retired"]
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "statement": { "type": "string", "minLength": 1 },
+    "surface": {
+      "type": "string",
+      "description": "Constitutionally protected surfaces (privacy, provenance, meta, integrity, agency, precedence, epistemics) are auto-rejected."
+    },
+    "expected_effect": { "type": "string" },
+    "primary_metric": { "type": "string" },
+    "evidence": { "type": "array" },
+    "modifies": { "type": "array", "items": { "type": "string" } },
+    "applies_to": { "type": "object" },
+    "parameters": { "type": "object" },
+    "proposed_by": { "type": "string" },
+
+    "constitution": {
+      "type": "object",
+      "required": ["checked", "violations"],
+      "properties": {
+        "checked": { "type": "boolean" },
+        "violations": { "type": "array", "items": { "type": "string" } },
+        "hash": { "type": ["string", "null"] },
+        "checked_at": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+
+    "replay": {
+      "type": ["object", "null"],
+      "properties": {
+        "episodes": { "type": "integer", "minimum": 0 },
+        "distinct_sessions": { "type": "integer", "minimum": 0 },
+        "primary_metric": { "type": "string" },
+        "primary_delta": { "type": ["number", "null"] },
+        "primary_is_estimated": { "type": "boolean" },
+        "guarded_deltas": { "type": "object" },
+        "caveat": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+
+    "benchmark": { "type": ["object", "null"] },
+    "adversarial": {
+      "type": ["object", "null"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failures": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+
+    "decision": {
+      "type": ["object", "null"],
+      "properties": {
+        "outcome": { "enum": ["promoted", "rejected"] },
+        "verdict": { "type": "object" },
+        "at": { "type": "string" },
+        "note": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+
+    "history": { "type": "array" }
+  },
+
+  "allOf": [
+    {
+      "if": {
+        "properties": { "state": { "const": "promoted" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "constitution": {
+            "properties": { "violations": { "maxItems": 0 } }
+          }
+        },
+        "required": ["replay", "decision"]
+      }
+    }
+  ]
+}

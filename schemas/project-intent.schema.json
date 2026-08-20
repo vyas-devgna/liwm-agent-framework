@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/project-intent.schema.json",
+  "title": "LIWM project intent",
+  "description": "What one project is for. Kept strictly separate from the personal profile: a project constraint never becomes a personality trait without independent cross-project evidence.",
+  "type": "object",
+  "required": ["schema_version", "project_id", "created_at", "updated_at"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "project_id": { "type": "string", "minLength": 1 },
+    "name": { "type": ["string", "null"] },
+    "domain": { "type": ["string", "null"] },
+    "stage": {
+      "enum": ["inception", "design", "build", "refine", "debug", "maintenance", "unknown"]
+    },
+    "revision": { "type": "integer", "minimum": 0 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+
+    "objectives": { "$ref": "#/$defs/itemList" },
+    "latent_objectives": { "$ref": "#/$defs/itemList" },
+    "desired_experience": { "$ref": "#/$defs/itemList" },
+    "anti_goals": { "$ref": "#/$defs/itemList" },
+    "non_negotiables": { "$ref": "#/$defs/itemList" },
+    "preferences": { "$ref": "#/$defs/itemList" },
+    "constraints": { "$ref": "#/$defs/itemList" },
+    "technical_constraints": { "$ref": "#/$defs/itemList" },
+    "inspirations": { "$ref": "#/$defs/itemList" },
+    "rejected_directions": { "$ref": "#/$defs/itemList" },
+    "emotional_targets": { "$ref": "#/$defs/itemList" },
+    "assumptions": { "$ref": "#/$defs/itemList" },
+    "open_questions": { "$ref": "#/$defs/itemList" },
+    "implementation_implications": { "$ref": "#/$defs/itemList" },
+
+    "contradictions": { "type": "array" },
+    "decision_consequences": { "type": "array" },
+
+    "confidence": {
+      "type": "object",
+      "properties": {
+        "overall_intent": { "type": "number", "minimum": 0, "maximum": 1 },
+        "stated": { "type": "integer", "minimum": 0 },
+        "inferred": { "type": "integer", "minimum": 0 },
+        "derived": { "type": "integer", "minimum": 0 },
+        "open_questions": { "type": "integer", "minimum": 0 },
+        "basis": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+
+  "$defs": {
+    "itemList": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "item": {
+      "type": "object",
+      "required": ["id", "text", "origin", "status"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "pattern": "^itm_" },
+        "text": { "type": "string", "minLength": 1 },
+        "origin": {
+          "enum": ["USER_SAID", "AGENT_INFERRED", "AGENT_DERIVED"],
+          "description": "Never collapses. An inference does not become a statement because it turned out to be right."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "status": { "enum": ["active", "superseded", "rejected"] },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
+        "evidence_refs": { "type": "array", "items": { "type": "string" } },
+        "belief_refs": { "type": "array", "items": { "type": "string" } },
+        "derived_from": { "type": "array", "items": { "type": "string" } },
+        "superseded_by": { "type": ["string", "null"] },
+        "superseded_reason": { "type": ["string", "null"] },
+        "disclosed": { "type": "boolean" },
+        "reversible": { "type": "boolean" },
+        "impact": { "enum": ["low", "medium", "high"] }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible LIWM defect using synthetic data
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach a real profile, event log, export, credential, or host configuration backup.
+  - type: input
+    id: version
+    attributes:
+      label: LIWM version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options: [Claude Code, OpenAI Codex, Generic Agent Skills host, Direct CLI/library]
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Synthetic reproduction
+      description: Use a temporary LIWM_HOME and synthetic values only.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted `liwm doctor --json` output

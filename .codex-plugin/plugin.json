@@ -1,0 +1,30 @@
+{
+  "name": "liwm-agent-framework",
+  "version": "0.1.0",
+  "description": "Local-first, evidence-backed intent learning for agent collaboration.",
+  "author": {
+    "name": "Vyas Devgna",
+    "url": "https://github.com/vyas-devgna"
+  },
+  "homepage": "https://github.com/vyas-devgna/liwm-agent-framework",
+  "repository": "https://github.com/vyas-devgna/liwm-agent-framework",
+  "license": "MIT",
+  "keywords": ["intent", "personalization", "agent-skills", "local-first"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "LIWM Agent Framework",
+    "shortDescription": "Evidence-backed intent learning for agents",
+    "longDescription": "A local-first cognitive interface layer that helps compatible agents learn a user's working preferences without profiling sensitive traits or contaminating global state with project instructions.",
+    "developerName": "Vyas Devgna",
+    "category": "Productivity",
+    "capabilities": ["Local-first", "Agent Skills", "Intent learning"],
+    "websiteURL": "https://github.com/vyas-devgna/liwm-agent-framework",
+    "privacyPolicyURL": "https://github.com/vyas-devgna/liwm-agent-framework/blob/main/PRIVACY.md",
+    "defaultPrompt": [
+      "Show what LIWM knows and where confidence is weak.",
+      "Use LIWM AUTO for this task.",
+      "Explain why LIWM made the last assumption."
+    ],
+    "brandColor": "#5B5BD6"
+  }
+}

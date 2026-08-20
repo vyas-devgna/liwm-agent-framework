@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/personal-strategy.schema.json",
+  "title": "LIWM personal strategy (Level 3)",
+  "description": "Bounded numeric knobs describing how to work with this specific person. Every knob has a floor and ceiling that no amount of evidence can breach.",
+  "type": "object",
+  "required": ["schema_version", "revision"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "updated_at": { "type": ["string", "null"] },
+    "observations": { "type": "integer", "minimum": 0 },
+
+    "creative_question_weight": { "type": "number", "minimum": 0.10, "maximum": 0.90 },
+    "technical_question_weight": { "type": "number", "minimum": 0.10, "maximum": 0.90 },
+    "preferred_question_length": { "enum": ["short", "medium", "long"] },
+    "counterfactual_probe_effectiveness": { "type": "number", "minimum": 0.05, "maximum": 0.95 },
+    "challenge_strength": {
+      "type": "number",
+      "minimum": 0.20,
+      "maximum": 0.90,
+      "description": "Floor is non-zero by constitutional design: an agent that never disagrees is optimising for approval (C09)."
+    },
+    "assumption_boldness": { "type": "number", "minimum": 0.10, "maximum": 0.85 },
+    "disclosure_verbosity": { "type": "number", "minimum": 0.15, "maximum": 0.90 },
+    "auto_low_threshold": { "type": "number", "minimum": 0.15, "maximum": 0.45 },
+    "auto_high_threshold": { "type": "number", "minimum": 0.50, "maximum": 0.85 },
+
+    "style_effectiveness": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0.35, "maximum": 1.8 }
+    },
+
+    "notes": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "properties": {
+          "at": { "type": "string" },
+          "reason": { "type": ["string", "null"] },
+          "changes": { "type": "object" }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

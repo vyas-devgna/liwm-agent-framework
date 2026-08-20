@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vyas-devgna/liwm-agent-framework/schemas/runtime-context.schema.json",
+  "title": "LIWM runtime context projection",
+  "description": "The small, task-shaped view an agent actually loads per turn. Derived from user.json; never authoritative, never hand-edited, always regenerable.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "mode",
+    "applies"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "profile_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "onboarding_status": {
+      "enum": [
+        "not_started",
+        "in_progress",
+        "completed",
+        "declined",
+        "not_consulted"
+      ]
+    },
+    "onboarding_already_offered": {
+      "type": "boolean",
+      "description": "True when onboarding has been offered at least once. Distinguishes 'never asked' from 'asked and declined', so the agent does not re-offer every session."
+    },
+    "profile_maturity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_hint": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": true
+    },
+    "mode": {
+      "type": "object",
+      "required": [
+        "effective"
+      ],
+      "properties": {
+        "effective": {
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "requested": {
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "auto"
+          ]
+        },
+        "resolved_from": {
+          "enum": [
+            "auto",
+            "explicit",
+            "config"
+          ]
+        },
+        "question_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "one_at_a_time": {
+          "type": "boolean"
+        },
+        "experiential_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "investigation_need": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "applies": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "required": [
+          "dimension",
+          "value",
+          "confidence",
+          "scope"
+        ],
+        "properties": {
+          "dimension": {
+            "type": "string"
+          },
+          "value": {},
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "scope": {
+            "enum": [
+              "global",
+              "domain",
+              "project",
+              "session"
+            ]
+          },
+          "scope_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "belief_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "avoid": {
+      "type": "array"
+    },
+    "open_uncertainties": {
+      "type": "array"
+    },
+    "contradictions": {
+      "type": "array"
+    },
+    "project": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "active_rules": {
+      "type": "array"
+    },
+    "strategy": {
+      "type": "object"
+    },
+    "reminders": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Always includes the precedence reminder that explicit instructions win."
+    }
+  }
+}

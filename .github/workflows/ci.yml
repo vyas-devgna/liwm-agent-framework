@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11"]
+        include:
+          # The floor and the ceiling on every OS: those are where portability
+          # actually breaks, and a zero-dependency package has no excuse for
+          # failing on either.
+          - os: ubuntu-latest
+            python: "3.9"
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: windows-latest
+            python: "3.9"
+          - os: windows-latest
+            python: "3.14"
+          - os: macos-latest
+            python: "3.9"
+          - os: macos-latest
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Unit and scenario tests
+        run: python tests/run_tests.py -v
+      - name: Repository, schema, skill, adapter, and Markdown validation
+        run: python tools/validate_repo.py
+      - name: Host registry and platform report
+        env:
+          PYTHONPATH: src
+          LIWM_HOME: ${{ runner.temp }}/liwm-hosts
+        run: |
+          python -m liwm init --allow-in-repo
+          python -m liwm doctor --json
+          python -m liwm hosts --json
+          python -m liwm hosts plan --host claude-code --block adapters/claude-code/bootstrap.md
+          python -m liwm hosts plan --host windsurf --block adapters/blocks/compact.md
+
+      - name: Behavioral evaluation smoke tests
+        env:
+          PYTHONPATH: src
+          LIWM_HOME: ${{ runner.temp }}/liwm-eval
+        run: |
+          python -m liwm init --allow-in-repo
+          python -m liwm eval modes
+          python -m liwm eval converge --archetype impatient_technical_expert --rounds 10
+      - name: Install pinned build tooling
+        run: python -m pip install --disable-pip-version-check setuptools==84.0.0 wheel==0.48.0
+      - name: Build wheel without network dependencies
+        run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+      - name: Validate wheel contents
+        run: python tools/check_wheel.py
+
+  private-state-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject accidentally tracked private LIWM state
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
+            echo "Private LIWM state filename is tracked"
+            exit 1
+          fi
