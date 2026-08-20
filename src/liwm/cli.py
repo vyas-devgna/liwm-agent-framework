@@ -1662,7 +1662,8 @@ def cmd_retro(args):
 def cmd_eval(args):
     if args.action == "intentbench":
         from .evaluation.intentbench import load_suite, run_intentbench
-        result = run_intentbench(load_suite(args.cases), adapter=args.adapter)
+        result = run_intentbench(load_suite(args.cases, suite=args.suite),
+                                 adapter=args.adapter)
         metrics = result["metrics"]
         return _emit(
             args, result,
@@ -2234,8 +2235,11 @@ def build_parser():
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)
     s.add_argument("--mode", default="auto")
-    s.add_argument("--cases", help="IntentBench suite JSON (defaults to synthetic smoke cases)")
-    s.add_argument("--adapter", choices=["liwm-projection", "static-first"],
+    s.add_argument("--cases", help="IntentBench suite JSON, overriding --suite")
+    s.add_argument("--suite", choices=["smoke", "mechanism"], default="smoke",
+                   help="smoke tests the runner contract; mechanism runs real LIWM "
+                        "against scope, poisoning, forgetting and transfer cases")
+    s.add_argument("--adapter", choices=["liwm", "liwm-projection", "static-first"],
                    default="liwm-projection")
     s.set_defaults(func=cmd_eval)
 
