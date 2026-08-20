@@ -412,7 +412,7 @@ The honest answer: **the safety and persistence invariants are proven; the
 effectiveness numbers are simulation, and labelled as such.**
 
 ```bash
-python tests/run_tests.py -v     # 246 tests, no third-party dependencies
+python tests/run_tests.py -v     # 252 tests, no third-party dependencies
 python -m liwm eval modes
 python -m liwm eval converge --archetype impatient_technical_expert --rounds 10
 ```
