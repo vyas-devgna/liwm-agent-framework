@@ -43,6 +43,37 @@ Atomic replace, fsync, timestamped backups, advisory `O_EXCL` locks, stale-lock
 handling, revision checks, and rebuild-on-conflict protect mutable views. Project
 intent has an independent lock and revision.
 
+Every projection of the log is bound by one tombstone rule, in
+`liwm/invalidation.py`: a `forget` reaches evidence recorded before it and
+nothing after it. Two projections disagreeing about whether something was
+deleted would be the framework telling the user one thing and the agent
+another, so the rule has one implementation and a conformance suite. See
+[docs/STATE_INVALIDATION.md](docs/STATE_INVALIDATION.md) for what each control
+does to each layer, and which layers are belief rather than measurement.
+
+## Intent state graph
+
+`intent-graph.json` is a second projection of the same log: typed nodes (goal,
+constraint, decision, intent hypothesis, and so on) and typed edges, each
+carrying provenance, evidence references and a confidence ceiling inherited
+from what it stands on.
+
+It is a **typed provenance graph with a small amount of state logic**, not a
+dynamic inference engine. Four edge types change an element's status —
+`falsified_by`, `validated_by`, `supersedes`, `rejects` — and an edge may not
+overrule an element it is weaker than, so an agent inference capped at 0.15
+cannot retire something the user said directly. Every other edge type describes
+a relationship and is inert, deliberately: an opaque reasoner would cost the
+inspectability that is the reason to have a graph at all.
+
+Confidence is recorded twice and they mean different things. `recorded_confidence`
+is what the evidence supported on the day the element was written and never
+changes. `effective_confidence` is computed at projection time with the same
+decay curve the profile uses, bounded by the effective confidence of the
+evidence beneath it, and evidence ages on its own clock rather than the
+element's. Consumers deciding how much to believe should read the effective
+pair; the recorded pair is the audit trail.
+
 ## Scope lattice
 
 ```text
@@ -88,8 +119,21 @@ update. Core rules are immutable candidates until they have:
 2. replayed on enough distinct historical episodes;
 3. improved a declared primary metric;
 4. avoided guarded-metric regressions;
-5. passed an adversarial evaluation;
-6. recorded a promotion decision and reason.
+5. passed an independent benchmark and an adversarial evaluation;
+6. accumulated evidence-bound human outcomes across separate sessions, from
+   interactions where the candidate actually produced the work;
+7. recorded a promotion decision and reason.
+
+Gate 6 is the one that makes the rest mean something. Replay scores a candidate
+against an acceptance model LIWM itself wrote, so a candidate can win on replay
+by fitting the evaluator rather than the person. But an unpromoted candidate
+never runs, which made the gate unsatisfiable until `liwm/experiments.py`
+existed: shadow evaluation computes without shipping and is explicitly not
+counted as human exposure; canary and A/B put candidate output in front of the
+user for a registered fraction of interactions, with the assignment derived
+from `sha256(seed, experiment, unit)` and committed as an event before the
+output exists, so it cannot be re-rolled or chosen after the fact. All three
+require explicit opt-in.
 
 Promoted rules remain data, not rewritten source prompts, and are revertible.
 
