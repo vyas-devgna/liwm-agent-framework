@@ -154,7 +154,7 @@ jobs:
       - name: Reject accidentally tracked private LIWM state
         shell: bash
         run: |
-          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules|question-outcomes|study-export)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
+          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules|question-outcomes|study-export|study-key|intent-graph|installation-journal)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
             echo "Private LIWM state filename is tracked"
             exit 1
           fi

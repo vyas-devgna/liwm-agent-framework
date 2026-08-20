@@ -1710,19 +1710,35 @@ def cmd_eval(args):
 
 
 def cmd_study(args):
-    from .study import export_study, set_study_enabled, study_status
+    from .study import (
+        delete_study_key, export_study, rotate_study_key, set_study_enabled,
+        study_key_status, study_status,
+    )
     home = _home(args)
     if args.action == "status":
-        result = study_status(home)
+        result = dict(study_status(home), key=study_key_status(home))
         return _emit(args, result, text="study mode %s; local only; no automatic upload"
                      % ("on" if result["enabled"] else "off"))
     if args.action in {"on", "off"}:
         result = set_study_enabled(home, args.action == "on")
         return _emit(args, result, text="study mode %s" % args.action)
+    if args.action == "rotate-key":
+        result = rotate_study_key(home, study_id=args.study_id)
+        return _emit(args, result, text="new longitudinal key for %s; exports made under "
+                                        "the old key can no longer be joined to new ones"
+                     % result["study_id"])
+    if args.action == "forget-key":
+        result = delete_study_key(home)
+        return _emit(args, result, text=(
+            "longitudinal key deleted; existing exports can never be linked or "
+            "re-identified from this machine again" if result["deleted"]
+            else "no longitudinal key to delete"))
     if args.action == "export":
-        result = export_study(home, out=args.out, anonymise=args.anonymise)
-        return _emit(args, result, text="local study export written to %s; inspect before sharing"
-                     % result["path"])
+        result = export_study(home, out=args.out, anonymise=args.anonymise,
+                              longitudinal=args.longitudinal)
+        return _emit(args, result, text="local %s study export written to %s; inspect "
+                                        "before sharing"
+                     % (result["mode"], result["path"]))
     return EXIT_USAGE
 
 
@@ -2224,9 +2240,15 @@ def build_parser():
     s.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("study", help="manage opt-in local research exports")
-    s.add_argument("action", choices=["status", "on", "off", "export"])
+    s.add_argument("action", choices=["status", "on", "off", "export",
+                                      "rotate-key", "forget-key"])
     s.add_argument("--out")
     s.add_argument("--anonymise", action="store_true")
+    s.add_argument("--longitudinal", action="store_true",
+                   help="stable within-study pseudonyms and relative time, so "
+                        "repeated measures join; implies --anonymise")
+    s.add_argument("--study-id", dest="study_id",
+                   help="name a rotated longitudinal key")
     s.set_defaults(func=cmd_study)
 
     s = sub.add_parser("schema", help="list or validate against shipped JSON schemas")

@@ -83,3 +83,74 @@ class TestStudyMode(LiwmTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongitudinalExportTests(LiwmTestCase):
+    """A fresh salt per export makes repeated measures impossible to join."""
+
+    def setUp(self):
+        super().setUp()
+        from liwm.study import set_study_enabled
+        set_study_enabled(self.home, True)
+        self.observe("preferences.editor", "vim", session_id="s1")
+        self.store.events.record("feedback", "direct_user_message", session_id="s1",
+                                 payload={"acceptance": 0.9, "task_id": "t1"})
+        self.store.events.record("feedback", "direct_user_message", session_id="s2",
+                                 payload={"acceptance": 0.4, "task_id": "t2"})
+
+    def _export(self, **kwargs):
+        from liwm.study import export_study
+        return export_study(self.home, out=str(self.home / "out.json"), **kwargs)
+
+    def test_one_off_exports_cannot_be_joined_to_each_other(self):
+        first = self._export(anonymise=True)
+        second = self._export(anonymise=True)
+        self.assertEqual(first["mode"], "one_off")
+        self.assertNotEqual([row["session_id"] for row in first["events"]],
+                            [row["session_id"] for row in second["events"]])
+
+    def test_longitudinal_exports_share_pseudonyms_within_one_study(self):
+        first = self._export(anonymise=True, longitudinal=True)
+        second = self._export(anonymise=True, longitudinal=True)
+        self.assertEqual(first["study_id"], second["study_id"])
+        self.assertEqual([row["session_id"] for row in first["events"]],
+                         [row["session_id"] for row in second["events"]])
+        self.assertIn("pseudonymity, not", first["privacy_notice"])
+
+    def test_rotating_the_key_severs_linkage(self):
+        from liwm.study import rotate_study_key
+        before = self._export(anonymise=True, longitudinal=True)
+        rotate_study_key(self.home)
+        after = self._export(anonymise=True, longitudinal=True)
+        self.assertNotEqual(before["study_id"], after["study_id"])
+        self.assertNotEqual([row["session_id"] for row in before["events"]],
+                            [row["session_id"] for row in after["events"]])
+
+    def test_deleting_the_key_is_offered_and_effective(self):
+        from liwm.study import delete_study_key, study_key_status
+        self._export(anonymise=True, longitudinal=True)
+        self.assertTrue(study_key_status(self.home)["exists"])
+        self.assertTrue(delete_study_key(self.home)["deleted"])
+        self.assertFalse(study_key_status(self.home)["exists"])
+
+    def test_a_longitudinal_row_carries_ordering_and_no_wall_clock(self):
+        rows = self._export(anonymise=True, longitudinal=True)["events"]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIsNone(row["ts"])
+            self.assertIsNotNone(row["relative_day"])
+            self.assertGreaterEqual(row["event_sequence_offset"], 1)
+        sessions = {row["session_id"]: row["session_ordinal"]
+                    for row in rows if row.get("session_ordinal")}
+        self.assertEqual(sorted(sessions.values()), list(range(1, len(sessions) + 1)))
+
+    def test_a_longitudinal_export_must_be_anonymised(self):
+        with self.assertRaises(ValueError):
+            self._export(longitudinal=True)
+
+    def test_the_key_never_reaches_the_export(self):
+        from liwm.study import study_key_status
+        payload = self._export(anonymise=True, longitudinal=True)
+        key = json.loads((self.home / "study-key.json").read_text())["key"]
+        self.assertNotIn(key, json.dumps(payload))
+        self.assertNotIn(key, json.dumps(study_key_status(self.home)))
