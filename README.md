@@ -475,6 +475,18 @@ cannot quietly become one everything passes.
 It is still synthetic. A pass means the implementation matches the
 specification, not that the specification helps anyone.
 
+To watch it happen rather than read about it:
+
+```bash
+sh examples/demo.sh
+```
+
+Six steps against a throwaway home: a preference learned from a statement, a
+repository file refused, a project preference that does not leak, a prediction
+committed and then scored against what the user actually did, a preference
+deleted from `user.json` and the intent graph by one tombstone, and nothing
+reaching certainty. No model, no network, no invented statistics.
+
 Over ten simulated rounds with an impatient expert, belief accuracy rises
 0.21 → 1.00, synthetic observed acceptance 0.36 → 1.00, and questions asked fall
 2.80 → 0.00. That is a deterministic simulator agreeing with its own model of a

@@ -103,3 +103,54 @@ class MechanismSuiteTests(LiwmTestCase):
         first, second = self._run("liwm"), self._run("liwm")
         self.assertEqual([row["target_probability"] for row in first["results"]],
                          [row["target_probability"] for row in second["results"]])
+
+
+class HumanDataLeakageChecks(unittest.TestCase):
+    """A human case that exposes its own answer is a fabrication, not a bug."""
+
+    def _suite(self, exposed, candidates=None):
+        return {
+            "suite_id": "human-test", "dataset_kind": "human_anonymised",
+            "cases": [{
+                "case_id": "leaky", "task_type": "preference_prediction",
+                "exposed_to_liwm": exposed,
+                "candidate_outputs": candidates or [{"id": "terse"}, {"id": "detailed"}],
+                "hidden_ground_truth": {"preferred_candidate": "terse"},
+                "observed_choice": "terse",
+            }],
+        }
+
+    def _load(self, suite):
+        import json
+        import tempfile
+        from pathlib import Path
+        from liwm.evaluation.intentbench import load_suite
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "suite.json"
+            path.write_text(json.dumps(suite), encoding="utf-8")
+            return load_suite(path)
+
+    def test_an_answer_in_the_participant_view_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._load(self._suite({"candidate_scores": {"terse": 0.9}}))
+        self.assertIn("exposes its own answer", str(caught.exception))
+
+    def test_an_answer_in_candidate_metadata_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._load(self._suite(
+                {}, [{"id": "terse"},
+                     {"id": "detailed", "note": "the participant picked terse"}]))
+        self.assertIn("leaks its answer", str(caught.exception))
+
+    def test_a_clean_human_case_loads(self):
+        suite = self._load(self._suite({"setup": []},
+                                       [{"id": "terse"}, {"id": "detailed"}]))
+        self.assertEqual(len(suite["cases"]), 1)
+
+    def test_the_synthetic_smoke_suite_is_exempt_and_labelled(self):
+        # It is circular on purpose. The exemption is why it must never claim
+        # to be anything but a runner check.
+        suite = load_suite(suite="smoke")
+        self.assertEqual(suite["dataset_kind"], "synthetic")
+        result = run_intentbench(suite)
+        self.assertEqual(result["result_label"], "synthetic_scorer_contract_smoke")

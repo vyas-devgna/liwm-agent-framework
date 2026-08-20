@@ -71,7 +71,32 @@ def load_suite(path=None, suite="smoke"):
             raise ValueError("observed_choice is not a candidate in case %r" % case["case_id"])
         if case["hidden_ground_truth"]["preferred_candidate"] != case["observed_choice"]:
             raise ValueError("ground truth and observed choice disagree in case %r" % case["case_id"])
+        _check_leakage(suite, case)
     return suite
+
+
+def _check_leakage(suite, case):
+    """Refuse a human case whose participant view contains its own answer.
+
+    Enforced only for human data, because the synthetic smoke suite is
+    deliberately circular and says so. For a human case a leak is not a style
+    problem: it turns the benchmark into a lookup and every number it produces
+    into a fabrication.
+    """
+    if suite["dataset_kind"] != "human_anonymised":
+        return
+    answer = case["hidden_ground_truth"]["preferred_candidate"]
+    exposed = json.dumps(case["exposed_to_liwm"])
+    if answer in exposed:
+        raise ValueError(
+            "case %r exposes its own answer (%r appears in exposed_to_liwm)"
+            % (case["case_id"], answer))
+    for candidate in case["candidate_outputs"]:
+        extra = {key: value for key, value in candidate.items() if key != "id"}
+        if answer in json.dumps(extra):
+            raise ValueError(
+                "case %r leaks its answer through candidate %r"
+                % (case["case_id"], candidate["id"]))
 
 
 def participant_view(case):
