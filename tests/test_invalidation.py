@@ -286,3 +286,124 @@ class StateEdgesChangeState(LiwmTestCase):
         self.graph.add_edge("supports", b["id"], a["id"], "direct_user_message", 0.9)
 
         self.assertEqual({r["status"] for r in self.graph.graph()["nodes"]}, {"active"})
+
+
+class ObservedOutcomesComeFromTheirEvidence(LiwmTestCase):
+    """An "observed" label must be read out of the event that observed it.
+
+    The old rule only required *some* later trusted user event to exist while
+    the caller supplied the label separately, so a prediction of option A could
+    be resolved as "the user chose B, observed" on the strength of the user
+    having said "thanks".
+    """
+
+    def _predict(self, **kwargs):
+        from liwm.prediction import make_prediction, record_prediction
+        prediction = make_prediction(0.7, 0.6, **kwargs)
+        record_prediction(self.store, prediction)
+        return prediction
+
+    def _preference(self):
+        from liwm.prediction import make_preference_prediction, record_prediction
+        prediction = make_preference_prediction({"a": 0.7, "b": 0.3}, 0.6)
+        record_prediction(self.store, prediction)
+        return prediction
+
+    def _feedback(self, **payload):
+        return self.store.events.record("feedback", "direct_user_message", payload=payload)
+
+    def test_a_generic_later_message_is_not_an_observed_outcome(self):
+        from liwm.prediction import resolve_prediction
+        prediction = self._predict()
+        thanks = self.store.events.record(
+            "observation", "direct_user_message",
+            observation={"dimension": "preferences.editor", "value": "vim",
+                         "source_type": "explicit_statement", "polarity": "support"})
+        with self.assertRaises(ValueError) as caught:
+            resolve_prediction(self.store, prediction["id"], 0.9,
+                               evaluator_type="observed_human_outcome",
+                               evidence_event_id=thanks["event_id"])
+        self.assertIn("must be a feedback event", str(caught.exception))
+
+    def test_unlinked_feedback_is_not_evidence_for_this_prediction(self):
+        from liwm.prediction import resolve_prediction
+        prediction = self._predict()
+        other = self._feedback(acceptance=0.9, prediction_id="prd_somethingelse")
+        with self.assertRaises(ValueError) as caught:
+            resolve_prediction(self.store, prediction["id"], 0.9,
+                               evaluator_type="observed_human_outcome",
+                               evidence_event_id=other["event_id"])
+        self.assertIn("not linked to prediction", str(caught.exception))
+
+    def test_the_caller_cannot_contradict_the_evidence(self):
+        from liwm.prediction import resolve_prediction
+        prediction = self._predict()
+        evidence = self._feedback(acceptance=0.2, prediction_id=prediction["id"])
+        with self.assertRaises(ValueError) as caught:
+            resolve_prediction(self.store, prediction["id"], 0.95,
+                               evaluator_type="observed_human_outcome",
+                               evidence_event_id=evidence["event_id"])
+        self.assertIn("contradicts the evidence event", str(caught.exception))
+
+    def test_the_label_is_read_out_of_the_evidence(self):
+        from liwm.prediction import resolve_prediction
+        prediction = self._predict()
+        evidence = self._feedback(acceptance=0.2, prediction_id=prediction["id"])
+        result = resolve_prediction(self.store, prediction["id"],
+                                    evaluator_type="observed_human_outcome",
+                                    evidence_event_id=evidence["event_id"])
+        self.assertEqual(result["actual_acceptance"], 0.2)
+        self.assertEqual(result["actual_first_pass"], 0)
+        self.assertEqual(result["outcome_binding"], "structured_feedback_event")
+
+    def test_a_preference_needs_the_chosen_option_on_the_record(self):
+        from liwm.prediction import resolve_prediction
+        prediction = self._preference()
+        vague = self._feedback(acceptance=0.9, prediction_id=prediction["id"])
+        with self.assertRaises(ValueError) as caught:
+            resolve_prediction(self.store, prediction["id"],
+                               evaluator_type="observed_human_outcome",
+                               actual_option="b", evidence_event_id=vague["event_id"])
+        self.assertIn("which option was selected", str(caught.exception))
+
+        chose_b = self._feedback(acceptance=0.9, selected_option="b",
+                                 prediction_id=prediction["id"])
+        with self.assertRaises(ValueError):
+            resolve_prediction(self.store, prediction["id"],
+                               evaluator_type="observed_human_outcome",
+                               actual_option="a", evidence_event_id=chose_b["event_id"])
+
+        result = resolve_prediction(self.store, prediction["id"],
+                                    evaluator_type="observed_human_outcome",
+                                    evidence_event_id=chose_b["event_id"])
+        self.assertEqual(result["actual_option"], "b")
+        self.assertFalse(result["top1_correct"])
+
+    def test_evidence_recorded_before_the_prediction_is_refused(self):
+        from liwm.prediction import make_prediction, record_prediction, resolve_prediction
+        early = self._feedback(acceptance=0.9, prediction_id="prd_unknown")
+        prediction = make_prediction(0.7, 0.6)
+        record_prediction(self.store, prediction)
+        with self.assertRaises(ValueError):
+            resolve_prediction(self.store, prediction["id"], 0.9,
+                               evaluator_type="observed_human_outcome",
+                               evidence_event_id=early["event_id"])
+
+    def test_calibration_keeps_unverified_history_in_its_own_bucket(self):
+        from liwm.metrics import compute_metrics
+        from liwm.prediction import make_prediction, record_prediction, resolve_prediction
+        legacy = make_prediction(0.7, 0.6)
+        record_prediction(self.store, legacy)
+        resolve_prediction(self.store, legacy["id"], 0.9)   # agent_recorded
+
+        prediction = self._predict()
+        evidence = self._feedback(acceptance=0.9, prediction_id=prediction["id"])
+        resolve_prediction(self.store, prediction["id"],
+                           evaluator_type="observed_human_outcome",
+                           evidence_event_id=evidence["event_id"])
+
+        calibration = compute_metrics(self.store)["calibration"]
+        self.assertIn("observed_human_outcome", calibration["by_evaluator"])
+        self.assertIn("agent_recorded", calibration["by_evaluator"])
+        self.assertFalse(calibration["expected_calibration_error_reliable"])
+        self.assertEqual(calibration["unresolved_predictions"], 0)

@@ -127,21 +127,13 @@ def resolve_prediction(store, prediction_id, actual_acceptance=None, observed_fr
     }
     if evaluator_type not in evaluator_types:
         raise ValueError("unknown evaluator type %r" % evaluator_type)
-    evidence_event = None
+    binding = None
     if evaluator_type == "observed_human_outcome":
-        evidence_event = next(
-            (event for event in store.events.iter_events(include_quarantined=True)
-             if event.get("event_id") == evidence_event_id), None
-        )
-        if (evidence_event is None or evidence_event.get("quarantined")
-                or evidence_event.get("provenance") not in {
-                    "direct_user_message", "direct_user_edit", "explicit_user_review"
-                }
-                or int(evidence_event.get("sequence") or 0)
-                <= int(prediction_event.get("sequence") or 0)):
-            raise ValueError(
-                "observed_human_outcome requires a later trusted user evidence event"
-            )
+        evidence_event = _bound_evidence(store, prediction, prediction_event,
+                                         evidence_event_id)
+        actual_acceptance, actual_option = _derive_labels(
+            prediction, evidence_event, actual_acceptance, actual_option)
+        binding = "structured_feedback_event"
 
     observed = set(observed_friction or [])
     predicted = {f["issue"] for f in prediction.get("predicted_friction", []) if f.get("issue")}
@@ -188,6 +180,10 @@ def resolve_prediction(store, prediction_id, actual_acceptance=None, observed_fr
         ),
         "candidate_id": prediction.get("candidate_id"),
         "evidence_event_id": evidence_event_id,
+        # Absent on every 0.2 outcome, which is the point: an observed label
+        # recorded before this rule existed was never checked against its
+        # evidence, and must not be counted as though it had been.
+        "outcome_binding": binding,
     }
     def unresolved(events):
         if any((event.get("payload") or {}).get("prediction_id") == prediction_id
@@ -199,6 +195,80 @@ def resolve_prediction(store, prediction_id, actual_acceptance=None, observed_fr
         session_id=session_id, project_id=project_id, domain=domain,
     )
     return result
+
+
+#: What an observed human outcome is allowed to be derived from.  A generic
+#: later message is not evidence of a choice; the label has to come out of the
+#: event that recorded the choice.
+_OUTCOME_EVIDENCE_KINDS = frozenset({"feedback"})
+_OUTCOME_EVIDENCE_PROVENANCE = frozenset({
+    "direct_user_message", "direct_user_edit", "explicit_user_review",
+})
+
+
+def _bound_evidence(store, prediction, prediction_event, evidence_event_id):
+    """The trusted feedback event that this prediction is resolved against.
+
+    The previous rule only checked that *some* later trusted user event
+    existed, while the caller supplied the label separately.  A prediction of
+    option A could therefore be resolved as "the user chose B, observed" on the
+    strength of the user having said "thanks".  A compliant agent would not do
+    that, but research infrastructure should not need the agent to be
+    interpreting correctly for its strongest evidence class to mean anything.
+    """
+    event = next(
+        (event for event in store.events.iter_events(include_quarantined=True)
+         if event.get("event_id") == evidence_event_id), None)
+    if event is None:
+        raise ValueError("observed_human_outcome requires an evidence event id")
+    payload = event.get("payload") or {}
+    problems = []
+    if event.get("quarantined"):
+        problems.append("evidence is quarantined")
+    if event.get("kind") not in _OUTCOME_EVIDENCE_KINDS:
+        problems.append("evidence must be a %s event, not %r"
+                        % ("/".join(sorted(_OUTCOME_EVIDENCE_KINDS)), event.get("kind")))
+    if event.get("provenance") not in _OUTCOME_EVIDENCE_PROVENANCE:
+        problems.append("evidence provenance %r is not a direct user channel"
+                        % event.get("provenance"))
+    if int(event.get("sequence") or 0) <= int(prediction_event.get("sequence") or 0):
+        problems.append("evidence precedes the prediction it is supposed to test")
+    if payload.get("prediction_id") != prediction["id"]:
+        problems.append("evidence is not linked to prediction %s" % prediction["id"])
+    if problems:
+        raise ValueError("observed_human_outcome refused: %s" % "; ".join(problems))
+    return event
+
+
+def _derive_labels(prediction, event, actual_acceptance, actual_option):
+    """Read the outcome out of the evidence, and refuse to be told otherwise."""
+    payload = event.get("payload") or {}
+    if prediction.get("target_type") == "categorical_preference":
+        chosen = payload.get("selected_option")
+        if chosen is None:
+            raise ValueError(
+                "observed_human_outcome for a preference prediction needs feedback "
+                "recording which option was selected")
+        if chosen not in (prediction.get("option_probabilities") or {}):
+            raise ValueError("selected option %r was not among the predicted options"
+                             % chosen)
+        if actual_option is not None and actual_option != chosen:
+            raise ValueError(
+                "actual_option %r contradicts the evidence event, which recorded %r"
+                % (actual_option, chosen))
+        return actual_acceptance, chosen
+    acceptance = payload.get("acceptance")
+    if acceptance is None:
+        raise ValueError(
+            "observed_human_outcome for an acceptance prediction needs feedback "
+            "carrying an acceptance score")
+    acceptance = _unit_interval(acceptance, "evidence acceptance")
+    if actual_acceptance is not None and abs(
+            _unit_interval(actual_acceptance, "actual_acceptance") - acceptance) > 1e-9:
+        raise ValueError(
+            "actual_acceptance %s contradicts the evidence event, which recorded %s"
+            % (actual_acceptance, acceptance))
+    return acceptance, actual_option
 
 
 def brier(pairs):

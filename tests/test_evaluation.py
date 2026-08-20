@@ -153,7 +153,8 @@ class TestReplayAndGating(LiwmTestCase):
             record_prediction(self.store, prediction, session_id="s%d" % i)
             feedback = self.store.events.record(
                 "feedback", "direct_user_message",
-                payload={"channel": "explicit", "acceptance": 0.9},
+                payload={"channel": "explicit", "acceptance": 0.9,
+                         "prediction_id": prediction["id"]},
                 session_id="s%d" % i,
             )
             resolve_prediction(

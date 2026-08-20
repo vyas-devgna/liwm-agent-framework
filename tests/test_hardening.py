@@ -138,7 +138,8 @@ class TestPredictionResolutionAuthority(LiwmTestCase):
         record_prediction(self.store, prediction)
         feedback = self.store.events.record(
             "feedback", "direct_user_message",
-            payload={"channel": "explicit", "acceptance": 0.8},
+            payload={"channel": "explicit", "acceptance": 0.8,
+                     "prediction_id": prediction["id"]},
         )
         result = resolve_prediction(
             self.store, prediction["id"], 0.8,

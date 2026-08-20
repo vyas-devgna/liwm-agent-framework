@@ -626,6 +626,7 @@ def cmd_feedback(args):
         global_intent=args.global_intent, extra_observations=extra,
         custom_acceptance=args.acceptance,
         provenance=args.provenance, derived_from=args.derived_from,
+        selected_option=args.selected_option,
     )
     return _emit(args, record, text=(
         "recorded %s feedback (%s), acceptance %s, %s"
@@ -1914,7 +1915,11 @@ def build_parser():
     s.add_argument("--session")
     s.add_argument("--artifact")
     s.add_argument("--decision")
-    s.add_argument("--prediction")
+    s.add_argument("--prediction",
+                   help="prediction this feedback is the outcome of; required "
+                        "before the prediction can be resolved as observed")
+    s.add_argument("--selected-option", dest="selected_option",
+                   help="option the user actually chose, for a preference prediction")
     s.add_argument("--acceptance", type=float)
     s.add_argument("--global-intent", dest="global_intent", action="store_true",
                    help="the user was speaking generally, not about this artifact")
@@ -2076,7 +2081,8 @@ def build_parser():
                             "observed_human_outcome", "external_evaluator",
                             "benchmark_ground_truth"])
     s.add_argument("--evidence-event",
-                   help="later trusted user event required for observed_human_outcome")
+                   help="feedback event linked to this prediction; observed_human_outcome "
+                        "reads the label out of it rather than taking your word")
     s.add_argument("--friction", action="append",
                    help="friction actually observed; repeatable")
     s.add_argument("--session")
