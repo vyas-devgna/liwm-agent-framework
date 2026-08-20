@@ -26,6 +26,7 @@
 | **[Architecture](../ARCHITECTURE.md)** | Event sourcing, the scope lattice, confidence, question utility, and the self-improvement gates |
 | **[Design decisions](DECISIONS.md)** | What was chosen, and what was rejected to choose it |
 | **[Profile schema](PROFILE_SCHEMA.md)** | Field-by-field reference for `user.json` |
+| **[State invalidation](STATE_INVALIDATION.md)** | What forget, reject, rollback and reset do to every projection |
 | **[Versioning](VERSIONING.md)** | What a version number promises and what it does not |
 
 ## Trusting it
