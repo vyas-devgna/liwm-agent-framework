@@ -110,11 +110,31 @@ from silently relearning it. Only a direct statement from them can revive it.
 
 Before producing something substantial, commit to how you expect it to land.
 Without a prediction recorded beforehand, "the framework is learning" is
-unfalsifiable. Keep it internal — never narrate probabilities at the user.
+unfalsifiable: any reaction can be narrated afterwards as consistent with the
+profile. Keep it internal — never narrate probabilities at the user.
 
-After their reaction, resolve it. The gap between predicted and actual is what
-`liwm stats` calibrates on, and it is the difference between a framework that
-measures itself and one that assumes it is working.
+```bash
+liwm predict --acceptance 0.7 --confidence 0.55 \
+  --friction "too terse:0.4" --artifact "auth refactor" \
+  --uncertain interaction_profile.preferred_verbosity --session "$SESSION"
+```
+
+It prints a `prd_…` id. After their reaction, resolve it with what actually
+happened:
+
+```bash
+liwm resolve --prediction prd_0659864f2919 --acceptance 0.3 --friction "too terse"
+```
+
+The gap between predicted and actual is what `liwm stats` calibrates on, and it
+is the difference between a framework that measures itself and one that assumes
+it is working. `liwm predictions --unresolved` lists commitments you made and
+never checked; those are not neutral gaps, because a pile of them means the
+calibration figures describe only the cases you chose to score.
+
+Predict when the work is substantial enough that being wrong would matter. A
+one-line answer does not need a prediction, and recording one for every reply
+turns calibration into noise.
 
 ## Never
 

@@ -5,6 +5,35 @@ and semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `liwm predict`, `liwm resolve` and `liwm predictions`. The Brier score and
+  calibration bins in `liwm stats` were computed from prediction and outcome
+  events that nothing outside the test suite could create, so calibration was
+  guaranteed to read zero samples for every real user while the documentation
+  claimed the framework measured itself. The loop is now reachable, the skills
+  give the commands, and `--unresolved` surfaces predictions made and never
+  scored, since resolving only the favourable ones would bias every figure.
+
+### Changed
+
+- The README no longer claims the gates "cannot be bypassed by a model that
+  decides to edit `user.json` directly". An agent runs with the user's
+  filesystem authority; the defensible claim is that a compliant host cannot
+  bypass them through normal use, and that tampering leaves traces because a
+  per-event hash mismatch excludes the event from the fold. It is a self-hash,
+  not a signed chain.
+- The README states plainly that 0.1.0 contains no world model in the sense an
+  ML researcher means: no learned latent representation, no generative
+  transition model, no counterfactual simulator over real trajectories. The
+  accurate description is an evidence-sourced, uncertainty-aware persistent user
+  model with active intent elicitation. The name is the destination.
+- `docs/RESEARCH.md` is a study protocol rather than a note: hypotheses,
+  a six-condition baseline set including the host's own built-in memory,
+  crossover design, primary and guarded measures, power and pre-registration,
+  and threats to validity.
+- Python 3.14 added to the package classifiers; CI already tested it.
+
 ## [0.1.0] - 2026-08-20
 
 ### Added

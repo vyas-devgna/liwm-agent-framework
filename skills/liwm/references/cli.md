@@ -92,6 +92,9 @@ liwm reset [--hard --yes]
 ```bash
 liwm init [--allow-in-repo]    liwm doctor      liwm verify
 liwm hosts [list|detect|plan --host <id> --block <path>]
+liwm predict --acceptance <0..1> --confidence <0..1> [--friction issue:prob]
+liwm resolve --prediction <prd_id> --acceptance <0..1> [--friction issue]
+liwm predictions [--unresolved]
 liwm rebuild [--as-of <ts>]    liwm migrate     liwm schema list
 liwm events stats|verify|tail [--limit N] [--include-quarantined]
 ```

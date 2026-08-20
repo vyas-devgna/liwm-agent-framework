@@ -51,9 +51,11 @@ persistently negative bias means LIWM systematically overrates how well its
 output will land — worth surfacing, because it means confident wrong
 assumptions are going unchallenged.
 
-Calibration only exists if predictions were recorded *before* feedback arrived.
-If `calibration.samples` is 0, say so rather than implying the framework is
-measuring itself when it is not.
+Calibration only exists if predictions were recorded *before* feedback arrived,
+with `liwm predict` and then `liwm resolve`. If `calibration.samples` is 0, say
+so plainly rather than implying the framework is measuring itself when it is
+not — and check `liwm predictions --unresolved`, because predictions made and
+never scored are the usual reason the number stays at zero.
 
 ## Sample sizes
 

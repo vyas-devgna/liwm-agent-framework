@@ -24,7 +24,7 @@ a claim checkable.
 | **When it stops applying** | never; a note lives until someone deletes it | half-life decay toward a floor, and rejection you control |
 | **Where it applies** | Claude Code's auto memory is per repository; anything cross-project goes in a global file that then applies everywhere | a scope lattice, with promotion that requires evidence from several projects |
 | **When two notes disagree** | both sit in the file; the model picks | contradictions are surfaced, counted, and resolvable |
-| **Is it working?** | unanswerable | predictions recorded before feedback, then scored (`liwm stats`) |
+| **Is it working?** | unanswerable | `liwm predict` before you react, `liwm resolve` after, Brier score and calibration bins in `liwm stats` |
 
 That last row is the one that matters most. "The agent is learning about me" is
 not a claim you can currently check. LIWM is built so that it is.
@@ -395,9 +395,20 @@ python -m liwm verify                    # integrity + schema + materialisation
 python -m liwm rollback --as-of 2026-08-01T12:00:00Z --yes
 ```
 
-Every mutation goes through the CLI, so the provenance gate, the privacy gate,
-atomic writes and the audit log cannot be bypassed by a model that decides to
-edit `user.json` directly.
+Every mutation *made through LIWM* goes through the CLI, so the provenance gate,
+the privacy gate, atomic writes and the audit log cannot be skipped by accident.
+
+To be precise about what that is not: it is not an OS security boundary. Your
+agent runs with your filesystem authority, so anything that can run as you can
+overwrite `~/.liwm/user.json`, rewrite the event log, or edit LIWM's own source.
+The per-event SHA-256 makes isolated tampering *visible* — a mismatched event is
+excluded from the fold and reported — but it is a self-hash, not a signed chain,
+so an attacker who rewrites every file can rewrite the hashes too.
+
+The defensible claim is that a **compliant host cannot bypass these gates
+through normal use**, and that tampering by a non-compliant one leaves traces.
+Making that stronger needs signing keys held outside the agent's reach, which is
+[on the roadmap](ROADMAP.md) and not in 0.1.0.
 
 ```python
 from liwm import open_home
@@ -412,7 +423,7 @@ The honest answer: **the safety and persistence invariants are proven; the
 effectiveness numbers are simulation, and labelled as such.**
 
 ```bash
-python tests/run_tests.py -v     # 252 tests, no third-party dependencies
+python tests/run_tests.py -v     # 256 tests, no third-party dependencies
 python -m liwm eval modes
 python -m liwm eval converge --archetype impatient_technical_expert --rounds 10
 ```
@@ -458,8 +469,28 @@ reports, and asserts the profile is unchanged.
 
 > **Status: 0.1.0 alpha.** The invariants are tested and the API is stable enough
 > to build on, but the effectiveness claims need longitudinal study with real
-> people. If you run one, [docs/RESEARCH.md](docs/RESEARCH.md) has the
-> instrumentation, and the maintainers would like to hear from you.
+> people. If you run one, [docs/RESEARCH.md](docs/RESEARCH.md) has the protocol
+> and the instrumentation, and the maintainers would like to hear from you.
+
+### About the name
+
+"Latent Intent World Model" describes where this is going, not what 0.1.0 is. In
+the sense an ML researcher means it, there is no world model here: no learned
+latent representation of a person, no generative transition model
+`P(next user state | latent state, action)`, no neural state-space model, and no
+counterfactual simulator grounded in real human trajectories.
+
+What 0.1.0 actually is, stated plainly:
+
+> an evidence-sourced, uncertainty-aware persistent user model with active
+> intent elicitation and an adaptive questioning policy.
+
+The scoring is transparent arithmetic over typed evidence — noisy-OR, ceilings,
+decay, scope — chosen because it is inspectable and falsifiable, not because it
+is the most expressive thing available. The prediction loop
+(`liwm predict` → `liwm resolve` → `liwm stats`) exists so that a later learned
+model has something to beat. Treat the name as the destination on the roadmap,
+and judge 0.1.0 on the paragraph above.
 
 ## License
 

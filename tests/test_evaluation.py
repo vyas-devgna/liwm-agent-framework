@@ -437,5 +437,81 @@ class TestPredictionCalibration(LiwmTestCase):
         self.assertGreater(metrics["calibration"]["brier_score"], 0)
 
 
+
+class TestPredictionIsReachableFromTheCLI(LiwmTestCase):
+    """The falsifiability loop has to be usable, not merely implemented.
+
+    `metrics.py` computed a Brier score from prediction and outcome events for
+    the whole of 0.1.0's development, but nothing outside the tests could create
+    one: `record_prediction` had no caller. Calibration was therefore guaranteed
+    to read zero samples for every real user, while the docs claimed the
+    framework measured itself. These tests keep the entry point wired.
+    """
+
+    def _cli(self, *argv):
+        from liwm.cli import main
+
+        return main(["--home", str(self.home), "--json", *argv])
+
+    def test_predict_then_resolve_produces_a_calibration_sample(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+        from liwm.metrics import MetricsStore
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self._cli("predict", "--acceptance", "0.7", "--confidence", "0.6",
+                      "--friction", "too terse:0.4", "--artifact", "refactor")
+        prediction_id = json.loads(buffer.getvalue())["id"]
+        self.assertTrue(prediction_id.startswith("prd_"))
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self._cli("resolve", "--prediction", prediction_id,
+                      "--acceptance", "0.3", "--friction", "too terse")
+        result = json.loads(buffer.getvalue())
+        self.assertEqual(result["direction"], "overconfident")
+        self.assertEqual(result["friction_hits"], ["too terse"])
+
+        metrics = MetricsStore(self.home).refresh(self.store)
+        self.assertEqual(metrics["calibration"]["samples"], 1)
+        self.assertAlmostEqual(metrics["calibration"]["brier_score"], 0.16, places=4)
+
+    def test_an_unresolved_prediction_is_reported_as_such(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        with redirect_stdout(io.StringIO()):
+            self._cli("predict", "--acceptance", "0.5", "--confidence", "0.5")
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self._cli("predictions", "--unresolved")
+        data = json.loads(buffer.getvalue())
+        self.assertEqual(data["unresolved"], 1)
+        self.assertFalse(data["predictions"][0]["resolved"])
+
+    def test_resolving_an_unknown_prediction_is_an_error_not_a_silent_no_op(self):
+        import io
+        from contextlib import redirect_stdout
+
+        with redirect_stdout(io.StringIO()):
+            code = self._cli("resolve", "--prediction", "prd_nope",
+                             "--acceptance", "0.5")
+        self.assertNotEqual(code, 0)
+
+    def test_malformed_friction_is_rejected_rather_than_stored_as_a_label(self):
+        import io
+        from contextlib import redirect_stdout
+
+        with redirect_stdout(io.StringIO()):
+            code = self._cli("predict", "--acceptance", "0.5", "--confidence", "0.5",
+                             "--friction", ":0.4")
+        self.assertNotEqual(code, 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()

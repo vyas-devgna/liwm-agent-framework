@@ -799,6 +799,119 @@ def cmd_stats(args):
     return _emit(args, metrics, text="\n".join(lines))
 
 
+def cmd_predict(args):
+    """Commit to an expectation *before* the user reacts to the work.
+
+    Without this, "the framework is learning" is unfalsifiable: any outcome can
+    be narrated as consistent with the profile after the fact.  With it, LIWM
+    has a number on the record that later turns out right or wrong, and
+    ``liwm stats`` reports the Brier score and calibration bins over them.
+    """
+    from .prediction import make_prediction, record_prediction
+
+    store = _store(args)
+    friction = []
+    for raw in args.friction or ():
+        issue, _, probability = raw.partition(":")
+        if not issue.strip():
+            raise ValueError("--friction takes 'issue[:probability]', got %r" % raw)
+        friction.append({
+            "issue": issue.strip(),
+            "probability": float(probability) if probability else 0.3,
+            "dimension": None,
+        })
+
+    prediction = make_prediction(
+        predicted_acceptance=args.acceptance,
+        confidence=args.confidence,
+        predicted_friction=friction,
+        uncertain_dimensions=args.uncertain or [],
+        intent_assumptions=args.assumption or [],
+        basis=args.basis or [],
+        artifact=args.artifact,
+    )
+    record_prediction(store, prediction, session_id=args.session,
+                      project_id=args.project, domain=args.domain)
+    return _emit(args, prediction,
+                 text="predicted acceptance %.2f (confidence %.2f) as %s\n"
+                      "resolve it with: liwm resolve --prediction %s --acceptance <actual>"
+                      % (prediction["predicted_acceptance"], prediction["confidence"],
+                         prediction["id"], prediction["id"]))
+
+
+def cmd_resolve(args):
+    """Score an earlier prediction against what actually happened."""
+    from .prediction import resolve_prediction
+
+    store = _store(args)
+    try:
+        result = resolve_prediction(
+            store, args.prediction, args.acceptance,
+            observed_friction=args.friction or [],
+            session_id=args.session, project_id=args.project, domain=args.domain,
+        )
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+
+    lines = ["predicted %.2f, actual %.2f, error %+.2f (%s)"
+             % (result["predicted_acceptance"], result["actual_acceptance"],
+                result["error"], result["direction"])]
+    if result["friction_hits"]:
+        lines.append("  foreseen:  %s" % ", ".join(result["friction_hits"]))
+    if result["friction_misses"]:
+        lines.append("  predicted but absent: %s" % ", ".join(result["friction_misses"]))
+    if result["surprises"]:
+        lines.append("  did not see coming: %s" % ", ".join(result["surprises"]))
+    return _emit(args, result, text="\n".join(lines))
+
+
+def cmd_predictions(args):
+    """List predictions and whether they were ever resolved.
+
+    An unresolved prediction is not a neutral gap: it is a commitment LIWM made
+    and never checked, and a pile of them means the calibration figures describe
+    a biased sample of the work.
+    """
+    store = _store(args)
+    predictions, outcomes = {}, {}
+    for event in store.events.iter_events(kinds={"prediction", "outcome"}):
+        payload = event.get("payload") or {}
+        if event.get("kind") == "prediction" and payload.get("id"):
+            predictions[payload["id"]] = {"at": event.get("ts"), **payload}
+        elif payload.get("prediction_id"):
+            outcomes[payload["prediction_id"]] = payload
+
+    rows = []
+    for pid, prediction in predictions.items():
+        outcome = outcomes.get(pid)
+        rows.append({
+            "id": pid,
+            "at": prediction.get("at"),
+            "predicted_acceptance": prediction.get("predicted_acceptance"),
+            "confidence": prediction.get("confidence"),
+            "resolved": outcome is not None,
+            "actual_acceptance": (outcome or {}).get("actual_acceptance"),
+            "error": (outcome or {}).get("error"),
+            "direction": (outcome or {}).get("direction"),
+        })
+    rows.sort(key=lambda r: r["at"] or "", reverse=True)
+    unresolved = [r for r in rows if not r["resolved"]]
+
+    if args.unresolved:
+        rows = unresolved
+    data = {"predictions": rows, "total": len(predictions),
+            "unresolved": len(unresolved)}
+    if not rows:
+        return _emit(args, data, text="no predictions recorded yet")
+    lines = ["%d prediction(s), %d unresolved" % (len(predictions), len(unresolved))]
+    for row in rows[: args.limit]:
+        lines.append("  %-18s predicted %.2f  %s" % (
+            row["id"], row["predicted_acceptance"] or 0.0,
+            ("actual %.2f (%s)" % (row["actual_acceptance"], row["direction"]))
+            if row["resolved"] else "UNRESOLVED"))
+    return _emit(args, data, text="\n".join(lines))
+
+
 def cmd_contradictions(args):
     store = _store(args)
     profile = store.load()
@@ -1527,6 +1640,41 @@ def build_parser():
     s.add_argument("--refresh", action="store_true", default=True)
     s.add_argument("--no-refresh", dest="refresh", action="store_false")
     s.set_defaults(func=cmd_stats)
+
+    s = sub.add_parser("predict", help="record what LIWM expects before the user reacts")
+    s.add_argument("--acceptance", type=float, required=True,
+                   help="expected acceptance of the artifact, 0..1")
+    s.add_argument("--confidence", type=float, required=True,
+                   help="how sure LIWM is of that expectation, 0..1")
+    s.add_argument("--friction", action="append",
+                   help="likely friction as 'issue[:probability]'; repeatable")
+    s.add_argument("--uncertain", action="append",
+                   help="dimension whose uncertainty drove this; repeatable")
+    s.add_argument("--assumption", action="append",
+                   help="intent assumption being acted on; repeatable")
+    s.add_argument("--basis", action="append", help="belief or event id relied on")
+    s.add_argument("--artifact", help="short label for what is being produced")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
+    s.set_defaults(func=cmd_predict)
+
+    s = sub.add_parser("resolve", help="score an earlier prediction against reality")
+    s.add_argument("--prediction", required=True, help="prediction id from liwm predict")
+    s.add_argument("--acceptance", type=float, required=True,
+                   help="acceptance actually observed, 0..1")
+    s.add_argument("--friction", action="append",
+                   help="friction actually observed; repeatable")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
+    s.set_defaults(func=cmd_resolve)
+
+    s = sub.add_parser("predictions", help="list predictions and their outcomes")
+    s.add_argument("--unresolved", action="store_true",
+                   help="show only predictions that were never scored")
+    s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(func=cmd_predictions)
 
     s = sub.add_parser("contradictions", help="list contradictions in the profile")
     s.set_defaults(func=cmd_contradictions)
