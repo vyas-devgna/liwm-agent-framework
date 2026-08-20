@@ -30,10 +30,10 @@ __all__ = [
     "version_tuple",
 ]
 
-CURRENT_SCHEMA_VERSION = "0.2.0"
+CURRENT_SCHEMA_VERSION = "0.3.0"
 
 #: Every version this build knows how to read.
-SUPPORTED_VERSIONS = ("0.1.0", "0.2.0")
+SUPPORTED_VERSIONS = ("0.1.0", "0.2.0", "0.3.0")
 
 
 class MigrationError(RuntimeError):
@@ -73,6 +73,12 @@ def _noop(profile):
 MIGRATIONS = (
     # (from_version, to_version, function)
     ("0.1.0", "0.2.0", _noop),
+    # 0.2 -> 0.3 is additive everywhere a profile is concerned. The new fields
+    # live in the intent graph projection, in outcome and question-outcome
+    # payloads, and in config, all of which are rebuilt or merged from
+    # defaults. Nothing in user.json needs rewriting, and rewriting it anyway
+    # would mean touching evidence in order to change a version string.
+    ("0.2.0", "0.3.0", _noop),
 )
 
 
@@ -153,6 +159,20 @@ def migrate_home(home, store=None):
             report["migrated"].append({"file": name, "steps": ["stamped"]})
         else:
             report["skipped"].append("%s (already %s)" % (name, CURRENT_SCHEMA_VERSION))
+
+    # The 0.3 intent graph carries effective confidence, effective ceiling and
+    # recorded status, none of which a 0.2 file has. It is a projection, so the
+    # migration is to rebuild it from the log rather than to patch fields into
+    # it -- and rebuilding also applies the forget semantics the 0.2 graph did
+    # not have, which is the point of the release.
+    if (home / "intent-graph.json").is_file():
+        try:
+            from .intent_graph import IntentGraphStore
+            backup_file(home / "intent-graph.json", home / "backups", tag="pre-migration")
+            IntentGraphStore(home).rebuild()
+            report["migrated"].append({"file": "intent-graph.json", "steps": ["rebuilt"]})
+        except (OSError, ValueError) as exc:
+            report["errors"].append({"file": "intent-graph.json", "error": str(exc)})
 
     if report["migrated"] and store is not None:
         store.events.record(

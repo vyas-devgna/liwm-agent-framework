@@ -1,4 +1,4 @@
-<!-- LIWM:BEGIN v0.2.0 standalone -->
+<!-- LIWM:BEGIN v0.3.0 standalone -->
 LIWM is installed. Before non-trivial work, run `{{LIWM_COMMAND}} context --json`
 and apply only the relevant evidence-backed preferences it returns; the current
 user instruction always wins over a stored preference. Use AUTO unless the user

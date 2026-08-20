@@ -3,7 +3,7 @@ name: liwm-counterfactual
 description: Resolve a stubborn ambiguity by offering alternatives that differ along one meaningful dimension and asking which feels closest. Use when direct questions have not settled an important choice.
 license: MIT
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   framework: liwm
 ---
 

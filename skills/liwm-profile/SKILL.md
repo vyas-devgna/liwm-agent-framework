@@ -3,7 +3,7 @@ name: liwm-profile
 description: Show the user what LIWM believes about them, with confidence, evidence and gaps. Use for "LIWM profile", "what do you know about me", or before acting on a low-confidence belief.
 license: MIT
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   framework: liwm
 ---
 

@@ -5,6 +5,123 @@ and semantic versioning.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-21
+
+A correctness and measurement release. No new surface area to speak of; what
+changed is that several things which were documented as true became true.
+
+### Fixed
+
+- **Forgetting reached only one projection.** The profile fold honoured
+  `liwm forget`; the intent graph did not. A node standing on evidence the
+  user deleted stayed active, so a forgotten preference was still readable
+  through a second view of the same log. Both projections now derive their
+  answer from one rule in `invalidation.py`. Elements whose whole basis was
+  forgotten go inactive, edges die with their endpoints, and a new element
+  cannot be built on forgotten evidence. `liwm intent explain|trace` refuse an
+  inactive element without `--history`; `intent-graph.json` records inactive
+  elements by id and reason only, never their labels.
+- **`liwm forget --belief` never worked.** A belief key is pipe-separated, the
+  free-text screen classifies prose by shape, and the tombstone reached disk
+  with its subject stripped to null.
+- **`decay_policy` was decorative in the intent graph.** The materialiser
+  validated the field and left confidence alone, so the graph could hold 0.8
+  indefinitely while the same belief had decayed in `user.json`. Recorded and
+  effective confidence are now separate; effective confidence uses the
+  profile's own `recency_factor`, bounded by the effective confidence of the
+  evidence beneath it, and evidence ages on its own clock.
+- **An "observed human outcome" did not have to match its evidence.**
+  `resolve_prediction` checked that some later trusted user event existed while
+  the caller supplied the label separately, so a prediction of option A could
+  be resolved as "the user chose B, observed" because the user had said
+  "thanks". The label is now read out of a feedback event carrying that
+  prediction's id, and a contradicting argument is an error rather than an
+  override.
+- **The promotion gate was unsatisfiable.** It demanded observed outcomes from
+  a candidate that never ran. See `liwm.experiments` below.
+- **Question effectiveness switched on at a threshold.** Four observations were
+  ignored and the fifth took full control of a question family's utility.
+- Seven defects found by linting: dead locals in the install planner and the
+  fold, a swallowed exception chain, a nested `max`, an unused loop variable,
+  an unchecked subprocess in a test.
+
+### Added
+
+- `liwm.experiments` — shadow, canary and A/B evaluation for candidate rules.
+  Shadow computes without shipping and its outcomes are never counted as human
+  exposure. Canary and A/B put candidate output in front of the user for a
+  registered fraction of interactions, capped at 0.25, with the assignment
+  committed as an event before the output exists and derived from
+  `sha256(seed, experiment, unit)` so it cannot be re-rolled. All three require
+  `learning.experiments_enabled`, which is off.
+- Four intent-graph edge types now change state instead of describing it:
+  `falsified_by`, `validated_by`, `supersedes`, `rejects`. An edge may not
+  overrule an element it is weaker than, so an agent inference capped at 0.15
+  cannot retire something the user said. Every other edge stays descriptive.
+- A durable installation journal, `liwm install status` and `liwm install
+  repair [--rollback]`. In-process rollback covers a bad plan; it does nothing
+  if the machine dies between file three and file four. A target found in
+  neither its original nor its planned state is refused rather than guessed at.
+  Tested by killing a real child process after each individual mutation.
+- The IntentBench `mechanism` suite: 17 cases across scope contamination,
+  poisoning resistance, selective forgetting, cross-domain transfer and
+  calibration, run against a real throwaway LIWM home. Real LIWM passes all 17;
+  the fixed-choice baseline scores 0.29, which is asserted, so the suite can
+  fail. Cases asserting the *absence* of an opinion are scored on departure
+  from uniform. Every run returns a manifest naming suite, adapter, version,
+  revision, determinism and metric definitions.
+- `liwm study export --longitudinal` — stable within-study pseudonyms from a
+  local key, and `relative_day` / `event_sequence_offset` / `session_ordinal` /
+  `task_ordinal` instead of wall-clock stamps. `liwm study rotate-key` severs
+  linkage; `liwm study forget-key` makes existing exports permanently
+  unjoinable. The notice says plainly that this is pseudonymity, not anonymity.
+- SILENT mode: profile and learning on, questions off. `liwm mode off` disables
+  all three, so a study using OFF as its no-elicitation arm changes three
+  things and blames elicitation for all of them. This is research condition E.
+- `docs/STATE_INVALIDATION.md` and `tests/test_state_invalidation.py`, naming
+  every projection and asserting what forget, reject, rollback, reset and
+  compaction do to each — including per-consumer compaction equivalence rather
+  than the single `user.json` check that was there before.
+- Development tooling: ruff, coverage at 79% overall and 82% for the modules
+  that decide what to trust, forget or install, and sixteen invariant tests
+  over randomised histories. Runtime dependencies remain zero.
+
+### Changed
+
+- Question effectiveness is hierarchical empirical-Bayes shrinkage toward a
+  prior worth six pseudo-observations, weighted down for evaluator quality and
+  same-session correlation. The planner multiplier is bounded to [0.70, 1.40]:
+  history tilts a question's utility, it never vetoes one.
+- `observed_information_gain` is now `estimated_uncertainty_reduction`. It was
+  the difference between two numbers LIWM produced about its own uncertainty;
+  nothing about the person was observed. Explicit user usefulness and trusted
+  answer evidence are tracked separately and weighted higher. 0.2 rows are
+  still read under the old name, as agent estimates, which is what they were.
+- Answer evidence on a question outcome is resolved rather than stored, so an
+  outcome cannot claim user evidence that does not exist or was quarantined.
+- The promotion gate counts only outcomes bound to their evidence, from
+  interactions the user was actually exposed to, spanning at least three
+  sessions.
+- `liwm stats` keeps unverified historical outcomes in
+  `observed_human_outcome_unverified`, reports resolution rate and unresolved
+  count, and flags an ECE computed on fewer than 30 samples.
+- The batch question planner's 0.55 constant is named `BATCH_RESOLUTION` and
+  documented as an assumed answer. `next_question` is stated as the canonical
+  path, because there the real answer arrives between picks.
+
+### Migration and compatibility
+
+- 0.2 to 0.3 is additive for `user.json`; the profile is stamped, not
+  rewritten. The intent graph is rebuilt from the log, because a 0.2 file has
+  no effective confidence and because rebuilding is also what applies the new
+  forget semantics to existing state.
+- Install plans are written at 0.3.0 and 0.2.0 receipts are still accepted. A
+  receipt is the only record of what an earlier release changed; refusing to
+  read one would strand the user with an installation they cannot remove.
+- Outcomes resolved before this release carry no `outcome_binding`. They are
+  retained, reported separately, and not counted as independent human evidence,
+  because they were never checked against anything.
+
 ## [0.2.0] - 2026-08-20
 
 ### Added

@@ -281,7 +281,8 @@ def interpret(kind, channel="explicit", text=None, project_id=None, domain=None,
 def record_feedback(store, kind, channel="explicit", text=None, project_id=None,
                     domain=None, session_id=None, artifact=None, decision_id=None,
                     prediction_id=None, global_intent=False, extra_observations=None,
-                    custom_acceptance=None, provenance=None, derived_from=None):
+                    custom_acceptance=None, provenance=None, derived_from=None,
+                    selected_option=None):
     """Record feedback as events and fold the result into the profile.
 
     Returns the feedback record, which is also appended to the project's
@@ -316,6 +317,10 @@ def record_feedback(store, kind, channel="explicit", text=None, project_id=None,
         "artifact": artifact,
         "decision_id": decision_id,
         "prediction_id": prediction_id,
+        # Which candidate the user actually picked, when the feedback is a
+        # choice.  A preference prediction can only be scored against an
+        # observed human outcome if the choice itself is on the record.
+        "selected_option": str(selected_option) if selected_option is not None else None,
         "acceptance": acceptance_score(kind, custom_acceptance),
         "project_id": project_id,
         "domain": domain,

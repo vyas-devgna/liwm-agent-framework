@@ -85,18 +85,49 @@ liwm reject --dimension <d> --value <v> --reason "<r>"
 liwm forget --dimension <d> | --belief <k> | --project <p>
 liwm export [--out <path>] [--anonymise] [--include-events]
 liwm study status|on|off
-liwm study export [--out <path>] [--anonymise]
+liwm study export [--out <path>] [--anonymise] [--longitudinal]
+liwm study rotate-key [--study-id <id>] | forget-key
 liwm reset [--hard --yes]
 ```
+
+Forgetting reaches every projection, not just `user.json`. A tombstone drops
+the evidence recorded before it and nothing after it, so new evidence can
+re-establish what was forgotten.
+
+## Intent graph
+
+```bash
+liwm intent graph [--scope <s>] [--scope-key <k>] [--include-inactive]
+liwm intent explain <id> [--history]
+liwm intent trace   <id> [--history]
+liwm intent node --type <t> --label "<l>" --origin user|edit|review|inference \
+                 --confidence <0..1> [--evidence <evt_id>]
+liwm intent edge --type <t> --source <ign_id> --target <ign_id> ...
+```
+
+Read `effective_confidence`, not `confidence`. The first is decayed and bounded
+by the evidence beneath it; the second is what was true the day it was
+recorded. `explain` and `trace` refuse an element the user forgot unless given
+`--history`.
 
 ## Maintenance
 
 ```bash
 liwm init [--allow-in-repo]    liwm doctor      liwm verify
 liwm hosts [list|detect|plan --host <id> --block <path>]
+liwm install  plan|apply|verify|status|repair [--plan <f>] [--rollback]
+liwm uninstall plan|apply|verify|status|repair [--plan <f>] [--rollback]
 liwm predict --acceptance <0..1> --confidence <0..1> [--friction issue:prob]
+liwm predict-preference --option a=0.7 --option b=0.3 --confidence <0..1>
 liwm resolve --prediction <prd_id> --acceptance <0..1> [--friction issue]
+liwm resolve --prediction <prd_id> --evaluator observed_human_outcome \
+             --evidence-event <evt_id>
 liwm predictions [--unresolved]
+
+An observed human outcome reads its label out of the linked feedback event, so
+record the feedback first with `liwm feedback --prediction <prd_id>` (add
+`--selected-option` for a preference prediction). Passing a contradicting
+`--acceptance` is an error, not an override.
 liwm rebuild [--as-of <ts>]    liwm migrate     liwm schema list
 liwm events stats|verify|tail [--limit N] [--include-quarantined]
 ```
@@ -108,8 +139,18 @@ liwm rules list [--state <s>] [--include-rejected]
 liwm rules replay  --id cand_<id>
 liwm rules promote --id cand_<id>
 liwm rules revert  --id cand_<id> --reason "<r>"
-liwm eval modes | converge --archetype <a> --rounds N | intentbench
+liwm rules experiments
+liwm rules enroll --id cand_<id> --experiment-mode shadow|canary|ab [--exposure 0.1]
+liwm rules assign --id cand_<id> --unit <interaction-id>
+liwm rules stop   --id cand_<id> --reason "<r>"
+liwm eval modes | converge --archetype <a> --rounds N
+liwm eval intentbench [--suite smoke|mechanism] [--adapter liwm|static-first]
 ```
+
+A candidate cannot be promoted on replay alone. It needs outcomes from
+interactions where it produced the work, which is what `enroll` and `assign`
+are for. Enrolling requires `learning.experiments_enabled`, which is off by
+default; do not turn it on for someone, ask them.
 
 ## Exit codes
 

@@ -31,10 +31,9 @@ from .hosts import detect_hosts
 from .jsonio import FileLock, lifecycle_lock_path, read_json_resilient, utc_now, write_json_atomic
 from .metrics import MetricsStore
 from .migrate import CURRENT_SCHEMA_VERSION, migrate_home
-from .modes import MODE_PROFILES, Signals, mode_profile, resolve_auto
+from .modes import Signals, mode_profile, resolve_auto
 from .onboarding import OnboardingSession
 from .paths import ensure_layout, is_inside_git_repo, liwm_home
-from .privacy import redact
 from .profile import ProfileStore
 from .projects import INTENT_SECTIONS, ProjectStore, slugify_project
 from .questions import QuestionPlanner
@@ -92,7 +91,7 @@ def _signals(args):
         try:
             data = json.loads(raw)
         except ValueError as exc:
-            raise SystemExit("--signals must be JSON: %s" % exc)
+            raise SystemExit("--signals must be JSON: %s" % exc) from exc
     for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
                 "specification_completeness", "recent_correction_rate", "fatigue"):
         value = getattr(args, key, None)
@@ -128,7 +127,7 @@ def _validate_state_documents(home, schema_store, include_events=False):
             found = schema_store.validate(document, schema_name)
             if found:
                 errors[str(path)] = found[:20]
-        except Exception as exc:  # noqa: BLE001 - health-check boundary
+        except Exception as exc:
             errors[str(path)] = [{"path": "", "message": str(exc)}]
     return {"checked": checked, "errors": errors, "ok": not errors}
 
@@ -229,6 +228,8 @@ def cmd_doctor(args):
     integrity = store.events.verify()
     state_documents = _validate_state_documents(home, schema_store)
     host_rows = detect_hosts(home)
+    from .installation import inspect_installation
+    interrupted = inspect_installation(home)
     errors = []
 
     try:
@@ -246,6 +247,9 @@ def cmd_doctor(args):
         "constitution_hash_matches": profile.get("constitution_hash") == constitution_hash(),
         "schema_version_current": profile.get("schema_version") == CURRENT_SCHEMA_VERSION,
         "config_present": (home / "config.json").is_file(),
+        # A journal left behind means a plan was in flight when the process
+        # stopped, so some host config may be half written.
+        "no_interrupted_installation": not interrupted["interrupted"],
         "recovery_note": store.last_recovery_note,
     }
     data = {
@@ -264,6 +268,7 @@ def cmd_doctor(args):
             "supports_symlinks": _supports_symlinks(home),
             "filesystem_case_sensitive": _case_sensitive(home),
         },
+        "interrupted_installation": interrupted,
         "hosts": host_rows,
         "hosts_detected": [row["id"] for row in host_rows if row["detected"]],
         "agents_skills_dir": str(Path.home() / ".agents" / "skills"),
@@ -404,11 +409,24 @@ def cmd_hosts(args):
 def cmd_installation(args):
     """Plan and execute hash-guarded host installation lifecycle operations."""
     from .installation import (
-        apply_plan, create_install_plan, create_uninstall_plan, load_plan, save_plan,
-        verify_plan,
+        apply_plan, create_install_plan, create_uninstall_plan, inspect_installation,
+        load_plan, repair_installation, save_plan, verify_plan,
     )
 
     home = _home(args)
+    if args.action == "status":
+        report = inspect_installation(home)
+        return _emit(args, report, text=(
+            "no interrupted installation" if not report["interrupted"] else
+            "interrupted %s of %s: %d applied, %d pending%s" % (
+                report["operation"], report["host"], report["applied"],
+                report["pending"],
+                "" if report["repairable"] else "; NOT repairable: %s"
+                % "; ".join(report["problems"]))))
+    if args.action == "repair":
+        report = repair_installation(home, rollback=args.rollback)
+        return _emit(args, report, text=(
+            report.get("reason") or "repaired by rolling %s" % report["direction"]))
     if args.action == "plan":
         if not args.host:
             raise ValueError("%s plan requires --host" % args.command)
@@ -626,6 +644,7 @@ def cmd_feedback(args):
         global_intent=args.global_intent, extra_observations=extra,
         custom_acceptance=args.acceptance,
         provenance=args.provenance, derived_from=args.derived_from,
+        selected_option=args.selected_option,
     )
     return _emit(args, record, text=(
         "recorded %s feedback (%s), acceptance %s, %s"
@@ -837,19 +856,23 @@ def cmd_intent(args):
         data = graph.graph(
             scope=args.scope, scope_key=args.scope_key,
             include_quarantined=args.include_quarantined,
+            include_inactive=args.include_inactive,
         )
         return _emit(args, data, text="intent graph: %d node(s), %d edge(s)" % (
             len(data["nodes"]), len(data["edges"]),
         ))
     if args.intent_action == "explain":
-        data = graph.explain(args.id)
+        data = graph.explain(args.id, history=args.history)
         element = data["element"]
-        return _emit(args, data, text="%s %s (%s, confidence %.2f)\n%d evidence ref(s)" % (
+        return _emit(args, data, text="%s %s (%s, effective confidence %.2f%s)\n"
+                                      "%d evidence ref(s)" % (
             element["type"], element.get("label", element["id"]), element["id"],
-            element["confidence"], len(data["basis"]),
+            element.get("effective_confidence", element.get("confidence", 0.0)),
+            "" if data["active"] else ", NOT ACTIVE: %s" % element.get("inactive_reason"),
+            len(data["basis"]),
         ))
     if args.intent_action == "trace":
-        data = graph.trace(args.id)
+        data = graph.trace(args.id, history=args.history)
         return _emit(args, data, text="trace %s: %d node(s), %d edge(s), %d event(s)" % (
             args.id, len(data["nodes"]), len(data["edges"]),
             len(data["evidence_events"]),
@@ -1615,6 +1638,39 @@ def cmd_rules(args):
         changed = si.revert(args.id, store=store, reason=args.reason or "user requested")
         return _emit(args, {"reverted": changed},
                      text="reverted" if changed else "no active rule with that id")
+
+    from .experiments import EXPERIMENT_MODES, ExperimentStore
+    experiments = ExperimentStore(store.home)
+    if args.action == "experiments":
+        data = experiments.load()
+        lines = ["%d experiment(s)" % len(data["experiments"])]
+        for row in data["experiments"]:
+            lines.append("  %-8s %-7s exposure %.2f  %s  %s"
+                         % (row["state"], row["mode"], row["exposure"],
+                            row["candidate_id"][:16],
+                            EXPERIMENT_MODES[row["mode"]]["note"]))
+        return _emit(args, data, text="\n".join(lines))
+
+    if args.action == "enroll":
+        row = experiments.enroll(args.id, args.experiment_mode, store=store,
+                                 exposure=args.exposure, seed=args.seed)
+        return _emit(args, row, text="enrolled %s as a %s experiment (%s)"
+                     % (args.id, row["mode"], EXPERIMENT_MODES[row["mode"]]["note"]))
+
+    if args.action == "assign":
+        if not args.unit:
+            raise ValueError("rules assign requires --unit")
+        assignment = experiments.assign(args.id, args.unit, store=store,
+                                        session_id=args.session, project_id=args.project,
+                                        domain=args.domain)
+        return _emit(args, assignment, text="%s -> %s (%s)"
+                     % (args.unit, assignment["condition"], assignment["exposure"]))
+
+    if args.action == "stop":
+        stopped = experiments.stop(args.id, store=store,
+                                   reason=args.reason or "user requested")
+        return _emit(args, {"stopped": stopped},
+                     text="stopped" if stopped else "no running experiment for that id")
     return EXIT_USAGE
 
 
@@ -1638,7 +1694,8 @@ def cmd_retro(args):
 def cmd_eval(args):
     if args.action == "intentbench":
         from .evaluation.intentbench import load_suite, run_intentbench
-        result = run_intentbench(load_suite(args.cases), adapter=args.adapter)
+        result = run_intentbench(load_suite(args.cases, suite=args.suite),
+                                 adapter=args.adapter)
         metrics = result["metrics"]
         return _emit(
             args, result,
@@ -1686,19 +1743,35 @@ def cmd_eval(args):
 
 
 def cmd_study(args):
-    from .study import export_study, set_study_enabled, study_status
+    from .study import (
+        delete_study_key, export_study, rotate_study_key, set_study_enabled,
+        study_key_status, study_status,
+    )
     home = _home(args)
     if args.action == "status":
-        result = study_status(home)
+        result = dict(study_status(home), key=study_key_status(home))
         return _emit(args, result, text="study mode %s; local only; no automatic upload"
                      % ("on" if result["enabled"] else "off"))
     if args.action in {"on", "off"}:
         result = set_study_enabled(home, args.action == "on")
         return _emit(args, result, text="study mode %s" % args.action)
+    if args.action == "rotate-key":
+        result = rotate_study_key(home, study_id=args.study_id)
+        return _emit(args, result, text="new longitudinal key for %s; exports made under "
+                                        "the old key can no longer be joined to new ones"
+                     % result["study_id"])
+    if args.action == "forget-key":
+        result = delete_study_key(home)
+        return _emit(args, result, text=(
+            "longitudinal key deleted; existing exports can never be linked or "
+            "re-identified from this machine again" if result["deleted"]
+            else "no longitudinal key to delete"))
     if args.action == "export":
-        result = export_study(home, out=args.out, anonymise=args.anonymise)
-        return _emit(args, result, text="local study export written to %s; inspect before sharing"
-                     % result["path"])
+        result = export_study(home, out=args.out, anonymise=args.anonymise,
+                              longitudinal=args.longitudinal)
+        return _emit(args, result, text="local %s study export written to %s; inspect "
+                                        "before sharing"
+                     % (result["mode"], result["path"]))
     return EXIT_USAGE
 
 
@@ -1804,8 +1877,8 @@ def build_parser():
     s.add_argument("--block", help="path to the bootstrap block, for budget checking")
     s.set_defaults(func=cmd_hosts)
 
-    for command, actions in (("install", ["plan", "apply", "verify", "repair"]),
-                             ("uninstall", ["plan", "apply", "verify"])):
+    for command, actions in (("install", ["plan", "apply", "verify", "status", "repair"]),
+                             ("uninstall", ["plan", "apply", "verify", "status", "repair"])):
         s = sub.add_parser(command, help="%s LIWM host integration safely" % command)
         s.add_argument("action", choices=actions)
         s.add_argument("--host", help="host id used when creating a plan")
@@ -1815,6 +1888,8 @@ def build_parser():
         s.add_argument("--skills-source", help="override LIWM skills source directory")
         s.add_argument("--no-skills", action="store_true",
                        help="manage only the host instruction block")
+        s.add_argument("--rollback", action="store_true",
+                       help="repair by undoing the interrupted plan rather than finishing it")
         s.set_defaults(func=cmd_installation)
 
     s = sub.add_parser("profile", help="show the profile quality report")
@@ -1826,7 +1901,7 @@ def build_parser():
     s.add_argument("--domain")
     s.add_argument("--project")
     s.add_argument("--task")
-    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "silent", "off"])
     s.add_argument("--signals", help="JSON object of AUTO signals")
     s.add_argument("--stage")
     s.add_argument("--write", action="store_true", help="also write runtime_context.json")
@@ -1910,7 +1985,11 @@ def build_parser():
     s.add_argument("--session")
     s.add_argument("--artifact")
     s.add_argument("--decision")
-    s.add_argument("--prediction")
+    s.add_argument("--prediction",
+                   help="prediction this feedback is the outcome of; required "
+                        "before the prediction can be resolved as observed")
+    s.add_argument("--selected-option", dest="selected_option",
+                   help="option the user actually chose, for a preference prediction")
     s.add_argument("--acceptance", type=float)
     s.add_argument("--global-intent", dest="global_intent", action="store_true",
                    help="the user was speaking generally, not about this artifact")
@@ -1923,7 +2002,7 @@ def build_parser():
     s.set_defaults(func=cmd_feedback)
 
     s = sub.add_parser("mode", help="resolve the operating mode")
-    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "silent", "off"])
     s.add_argument("--signals")
     s.add_argument("--stage")
     for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
@@ -1932,7 +2011,7 @@ def build_parser():
     s.set_defaults(func=cmd_mode)
 
     s = sub.add_parser("plan", help="plan which questions are worth asking")
-    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "silent", "off"])
     s.add_argument("--domain")
     s.add_argument("--project")
     s.add_argument("--risk", type=float, default=0.5, help="misunderstanding risk 0-1")
@@ -1981,10 +2060,17 @@ def build_parser():
     intent_graph.add_argument("--scope", choices=["global", "domain", "project", "session"])
     intent_graph.add_argument("--scope-key", dest="scope_key")
     intent_graph.add_argument("--include-quarantined", action="store_true")
+    intent_graph.add_argument(
+        "--include-inactive", action="store_true",
+        help="also list elements a forget tombstone removed, by id and reason only")
     intent_explain = intent_sub.add_parser("explain", help="explain one node or edge")
     intent_explain.add_argument("id")
+    intent_explain.add_argument(
+        "--history", action="store_true",
+        help="inspect the retained audit record of an element the user forgot")
     intent_trace = intent_sub.add_parser("trace", help="trace upstream evidence and intent")
     intent_trace.add_argument("id")
+    intent_trace.add_argument("--history", action="store_true")
 
     def add_intent_mutation_args(parser, types):
         parser.add_argument("--type", required=True, choices=sorted(types))
@@ -2065,7 +2151,8 @@ def build_parser():
                             "observed_human_outcome", "external_evaluator",
                             "benchmark_ground_truth"])
     s.add_argument("--evidence-event",
-                   help="later trusted user event required for observed_human_outcome")
+                   help="feedback event linked to this prediction; observed_human_outcome "
+                        "reads the label out of it rather than taking your word")
     s.add_argument("--friction", action="append",
                    help="friction actually observed; repeatable")
     s.add_argument("--session")
@@ -2162,11 +2249,24 @@ def build_parser():
     s.set_defaults(func=cmd_migrate)
 
     s = sub.add_parser("rules", help="inspect and gate self-improvement candidates")
-    s.add_argument("action", choices=["list", "replay", "promote", "revert"])
+    s.add_argument("action", choices=["list", "replay", "promote", "revert",
+                                      "experiments", "enroll", "assign", "stop"])
     s.add_argument("--id")
     s.add_argument("--state")
     s.add_argument("--reason")
     s.add_argument("--include-rejected", action="store_true")
+    s.add_argument("--experiment-mode", dest="experiment_mode", default="shadow",
+                   choices=["shadow", "canary", "ab"],
+                   help="shadow computes without shipping; canary and ab put the "
+                        "candidate in front of the user and need consent")
+    s.add_argument("--exposure", type=float,
+                   help="fraction of eligible interactions for a user-facing arm; "
+                        "defaults to 0.10 for canary, 0.50 for ab")
+    s.add_argument("--seed", help="fix the assignment seed for a registered design")
+    s.add_argument("--unit", help="interaction id to assign, committed before output")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
     s.set_defaults(func=cmd_rules)
 
     s = sub.add_parser("retro", help="run a session retrospective")
@@ -2180,15 +2280,24 @@ def build_parser():
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)
     s.add_argument("--mode", default="auto")
-    s.add_argument("--cases", help="IntentBench suite JSON (defaults to synthetic smoke cases)")
-    s.add_argument("--adapter", choices=["liwm-projection", "static-first"],
+    s.add_argument("--cases", help="IntentBench suite JSON, overriding --suite")
+    s.add_argument("--suite", choices=["smoke", "mechanism"], default="smoke",
+                   help="smoke tests the runner contract; mechanism runs real LIWM "
+                        "against scope, poisoning, forgetting and transfer cases")
+    s.add_argument("--adapter", choices=["liwm", "liwm-projection", "static-first"],
                    default="liwm-projection")
     s.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("study", help="manage opt-in local research exports")
-    s.add_argument("action", choices=["status", "on", "off", "export"])
+    s.add_argument("action", choices=["status", "on", "off", "export",
+                                      "rotate-key", "forget-key"])
     s.add_argument("--out")
     s.add_argument("--anonymise", action="store_true")
+    s.add_argument("--longitudinal", action="store_true",
+                   help="stable within-study pseudonyms and relative time, so "
+                        "repeated measures join; implies --anonymise")
+    s.add_argument("--study-id", dest="study_id",
+                   help="name a rotated longitudinal key")
     s.set_defaults(func=cmd_study)
 
     s = sub.add_parser("schema", help="list or validate against shipped JSON schemas")
@@ -2249,7 +2358,7 @@ def main(argv=None):
         return 130
     except SystemExit:
         raise
-    except Exception as exc:  # noqa: BLE001 - CLI boundary
+    except Exception as exc:
         if getattr(args, "json", False):
             sys.stdout.write(json.dumps({"error": str(exc),
                                          "type": type(exc).__name__}, indent=2) + "\n")

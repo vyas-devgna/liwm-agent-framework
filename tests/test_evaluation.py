@@ -11,7 +11,6 @@ import unittest
 from helpers import LiwmTestCase
 
 from liwm.evaluation import ARCHETYPES, make_user, run_convergence_study, run_mode_study
-from liwm.evaluation.harness import belief_accuracy
 from liwm.evaluation.replay import replay_candidate, replay_episodes
 from liwm.selfimprove import CandidateRule, GUARDED_METRICS, SelfImprovementStore
 
@@ -136,31 +135,53 @@ class TestReplayAndGating(LiwmTestCase):
         return episodes
 
     def _record_observed_outcomes(self, n=6, candidate_id=None):
-        """Resolve *n* real predictions so the observed-outcome gate is satisfied.
+        """Run a candidate through a real canary and resolve its outcomes.
 
         Replay alone cannot promote anything: it scores a candidate against an
         acceptance model LIWM wrote, so a candidate can win by fitting the
-        evaluator rather than the person. Promotion also requires outcomes that
-        were committed to before the user reacted and scored against what they
-        actually did.
+        evaluator rather than the person. Promotion needs outcomes committed to
+        before the user reacted, scored against what they actually did, from
+        interactions where the candidate produced the work.
         """
+        from liwm.config import ConfigStore
+        from liwm.experiments import ExperimentStore
         from liwm.prediction import make_prediction, record_prediction, resolve_prediction
 
-        for i in range(n):
+        config = ConfigStore(self.home)
+        settings = config.load()
+        settings["learning"]["experiments_enabled"] = True
+        config.save(settings)
+        experiments = ExperimentStore(self.home)
+        # Exposure 0.25 with a unit stream would only assign a quarter of them,
+        # so drive the assignment directly for the units this test uses.
+        experiments.enroll(candidate_id, "canary", store=self.store, exposure=0.25,
+                           seed="deterministic-test-seed")
+        recorded = 0
+        unit = 0
+        while recorded < n:
+            unit += 1
+            assignment = experiments.assign(
+                candidate_id, "task-%d" % unit, store=self.store,
+                session_id="s%d" % recorded)
+            if assignment["exposure"] != "user_facing":
+                continue
             prediction = make_prediction(
-                predicted_acceptance=0.7, confidence=0.6, candidate_id=candidate_id
+                predicted_acceptance=0.7, confidence=0.6, candidate_id=candidate_id,
+                unit=assignment["unit"],
             )
-            record_prediction(self.store, prediction, session_id="s%d" % i)
+            record_prediction(self.store, prediction, session_id="s%d" % recorded)
             feedback = self.store.events.record(
                 "feedback", "direct_user_message",
-                payload={"channel": "explicit", "acceptance": 0.9},
-                session_id="s%d" % i,
+                payload={"channel": "explicit", "acceptance": 0.9,
+                         "prediction_id": prediction["id"]},
+                session_id="s%d" % recorded,
             )
             resolve_prediction(
-                self.store, prediction["id"], 0.9, session_id="s%d" % i,
+                self.store, prediction["id"], session_id="s%d" % recorded,
                 evaluator_type="observed_human_outcome",
                 evidence_event_id=feedback["event_id"],
             )
+            recorded += 1
 
     @staticmethod
     def _independent_results(si, candidate):

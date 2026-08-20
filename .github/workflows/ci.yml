@@ -145,6 +145,29 @@ jobs:
           "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/liwm" init --allow-in-repo
           "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/liwm" verify --json
 
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install development tooling
+        run: python -m pip install --upgrade ruff "coverage[toml]"
+      - name: Lint
+        run: ruff check src tests tools
+      - name: Coverage
+        run: |
+          coverage run tests/run_tests.py
+          coverage report
+          # A floor, not a target. The second gate is the point: the modules
+          # that decide what to trust, what to forget and what to install are
+          # held higher than the average, because a gap there is a gap in a
+          # security boundary rather than in a convenience.
+          coverage report --fail-under=78
+          coverage report --fail-under=82 \
+            --include='*/events.py,*/evidence.py,*/privacy.py,*/prediction.py,*/invalidation.py,*/intent_graph.py,*/installation.py,*/constitution.py,*/selfimprove.py,*/experiments.py'
+
   private-state-guard:
     runs-on: ubuntu-latest
     steps:
@@ -154,7 +177,7 @@ jobs:
       - name: Reject accidentally tracked private LIWM state
         shell: bash
         run: |
-          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules|question-outcomes|study-export)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
+          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules|question-outcomes|study-export|study-key|intent-graph|installation-journal)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
             echo "Private LIWM state filename is tracked"
             exit 1
           fi

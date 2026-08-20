@@ -27,7 +27,7 @@ __all__ = [
     "StructuredRanker", "LexicalRanker", "rank_beliefs",
 ]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 DEFAULT_MAX_BELIEFS = 14
 #: Hard cap on the serialised projection.  If it does not fit, it is trimmed,

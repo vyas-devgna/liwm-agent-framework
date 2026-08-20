@@ -29,7 +29,15 @@ from __future__ import annotations
 from .question_bank import QUESTION_BANK, STYLE_CLASS, by_id
 from .taxonomy import decision_impact, dimension_meta
 
+#: How much of a dimension's uncertainty a batch plan assumes one answer will
+#: resolve.  An authored constant standing in for a reply that has not happened
+#: yet: it exists only so a multi-question plan is not a top-N list of near
+#: duplicates.  Sequential planning does not use it, because there the real
+#: answer arrives between picks.
+BATCH_RESOLUTION = 0.55
+
 __all__ = [
+    "BATCH_RESOLUTION",
     "QuestionPlanner",
     "score_question",
     "uncertainty_for",
@@ -234,9 +242,14 @@ class QuestionPlanner:
                         ) for dimension in q["resolves"]]
                         empirical = [row for row in estimates if row["empirical"]]
                         if empirical:
-                            factor = 0.5 + sum(row["estimate"] for row in empirical) / len(empirical)
+                            # Each estimate is already shrunk toward the prior,
+                            # so a handful of noisy outcomes barely moves it,
+                            # and the factor is bounded so history can tilt a
+                            # question's utility but never veto it.
+                            factor = sum(row["planner_factor"] for row in empirical) / len(empirical)
                             s["utility"] = round(s["utility"] * factor, 4)
                             s["empirical_effectiveness"] = empirical
+                            s["empirical_factor"] = round(factor, 4)
                     scored.append(s)
             if not scored:
                 break
@@ -267,16 +280,21 @@ class QuestionPlanner:
             # Asking about a dimension makes further questions about it redundant.
             for dim in best["resolves"]:
                 asked[dim] = asked.get(dim, 0) + 1
-            # Simulate the answer partially resolving the uncertainty, which is
-            # what makes the plan adaptive rather than a top-N list.
+            # Assume the answer partially resolves the uncertainty, so the next
+            # pick is not a redundant near-copy of this one.  This is a batch
+            # approximation and is labelled as such: no answer has been given,
+            # and BATCH_RESOLUTION is an authored constant, not a measurement.
+            # ``next_question`` is the honest path - it replans against the real
+            # answer - and is what HIGH mode uses.
             for dim in best["resolves"]:
                 belief = dict(self.resolved.get(dim) or {})
                 prior = float(belief.get("confidence", 0.0))
-                belief["confidence"] = prior + (1.0 - prior) * 0.55 * best["contributions"][0].get(
-                    "relevance", 0.6
+                belief["confidence"] = prior + (1.0 - prior) * BATCH_RESOLUTION * (
+                    best["contributions"][0].get("relevance", 0.6)
                 )
                 belief.setdefault("value", None)
                 belief["provisional"] = True
+                belief["provisional_basis"] = "assumed_batch_resolution"
                 self.resolved[dim] = belief
 
             if not self.contract.get("adaptive_continue", True):
@@ -285,7 +303,14 @@ class QuestionPlanner:
         return chosen
 
     def next_question(self, **kwargs):
-        """Single highest-utility question, for HIGH mode's one-at-a-time loop."""
+        """Single highest-utility question: the canonical path.
+
+        Replanning after each real answer is the gold standard, because the
+        planner then conditions on what the user actually said.  ``plan`` with
+        a budget above one returns an approximate preview built on assumed
+        answers, and should be read as an agenda rather than as a sequence LIWM
+        has any reason to believe it will follow.
+        """
         kwargs["max_questions"] = 1
         plan = self.plan(**kwargs)
         return plan[0] if plan else None

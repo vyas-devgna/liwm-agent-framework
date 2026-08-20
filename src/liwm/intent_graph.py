@@ -9,8 +9,11 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, SINGLE_OBSERVATION_CLAMP
+from .evidence import (
+    PROVENANCE_TRUST, SOURCE_CEILINGS, SINGLE_OBSERVATION_CLAMP, recency_factor,
+)
 from .events import EventStore, SCHEMA_VERSION
+from .invalidation import invalidated_event_ids
 from .jsonio import FileLock, utc_now_ms, write_json_atomic
 from .privacy import screen_observation
 
@@ -31,6 +34,18 @@ STATUSES = frozenset({
     "active", "hypothesis", "validated", "falsified", "superseded", "rejected",
 })
 DECAY_POLICIES = frozenset({"none", "slow", "standard", "volatile", "session"})
+
+#: Edges that change the state of an element rather than merely describing it.
+#: The value is ``(endpoint, resulting status)``: ``supersedes`` acts on its
+#: target, ``falsified_by`` on its source.  Every other edge type is
+#: descriptive, and deliberately stays that way - an opaque inference engine
+#: would cost the inspectability that is the point of a graph.
+STATE_EDGES = {
+    "falsified_by": ("source", "falsified"),
+    "validated_by": ("source", "validated"),
+    "supersedes": ("target", "superseded"),
+    "rejects": ("target", "rejected"),
+}
 
 _PROVENANCE_CEILINGS = {
     "direct_user_message": SINGLE_OBSERVATION_CLAMP,
@@ -159,8 +174,9 @@ class IntentGraphStore:
         self.rebuild()
         return event, element
 
-    def graph(self, *, scope=None, scope_key=None, include_quarantined=False):
-        graph = self._materialize()
+    def graph(self, *, scope=None, scope_key=None, include_quarantined=False,
+              include_inactive=False, now=None):
+        graph = self._materialize(now=now)
         if scope is not None or scope_key is not None:
             def matches(row):
                 return ((scope is None or row["scope"] == scope) and
@@ -171,6 +187,8 @@ class IntentGraphStore:
                               row["source"] in node_ids and row["target"] in node_ids]
         if not include_quarantined:
             graph.pop("quarantined", None)
+        if not include_inactive:
+            graph.pop("inactive", None)
         return graph
 
     def rebuild(self):
@@ -179,33 +197,45 @@ class IntentGraphStore:
             write_json_atomic(self.path, graph)
         return graph
 
-    def explain(self, element_id):
+    def explain(self, element_id, history=False):
+        """Explain one active element.
+
+        Elements the user forgot are not active state, so by default asking
+        about one fails the same way asking about a deleted belief does.
+        ``history=True`` is the audit path: the events themselves are immutable
+        and remain inspectable, but a normal explanation honours the tombstone
+        rather than reading around it.
+        """
         graph = self._materialize()
         index = self._element_index(graph)
-        if element_id not in index:
-            raise KeyError("intent graph element %s not found" % element_id)
-        element = index[element_id]
+        element = index.get(element_id) or self._historical(graph, element_id, history)
         event_index = self._event_index()
+        invalidated = invalidated_event_ids(list(event_index.values()))
         basis = []
         for ref in element.get("evidence_refs", []):
             if ref in index:
-                basis.append({"kind": "graph_element", "element": index[ref]})
+                basis.append({"kind": "graph_element", "active": True,
+                              "element": index[ref]})
             elif ref in event_index:
-                basis.append({"kind": "event", "event": _summary(event_index[ref])})
+                basis.append({"kind": "event", "active": ref not in invalidated,
+                              "forgotten": ref in invalidated,
+                              "event": _summary(event_index[ref])})
             else:
-                basis.append({"kind": "unresolved", "id": ref})
-        result = {"element": element, "basis": basis}
+                basis.append({"kind": "unresolved", "active": False, "id": ref})
+        result = {"element": element, "basis": basis,
+                  "active": element_id in index}
         if element_id.startswith("ign_"):
             result["incoming_edges"] = [e for e in graph["edges"] if e["target"] == element_id]
             result["outgoing_edges"] = [e for e in graph["edges"] if e["source"] == element_id]
         return result
 
-    def trace(self, element_id):
+    def trace(self, element_id, history=False):
         graph = self._materialize()
         index = self._element_index(graph)
         if element_id not in index:
-            raise KeyError("intent graph element %s not found" % element_id)
+            self._historical(graph, element_id, history)
         event_index = self._event_index()
+        invalidated = invalidated_event_ids(list(event_index.values()))
         nodes, edges, evidence, unresolved, seen = {}, {}, {}, set(), set()
         incoming = {}
         for edge in graph["edges"]:
@@ -216,7 +246,8 @@ class IntentGraphStore:
                 return
             seen.add(ref)
             if ref in event_index and ref not in index:
-                evidence[ref] = _summary(event_index[ref])
+                evidence[ref] = dict(_summary(event_index[ref]),
+                                     forgotten=ref in invalidated)
                 return
             element = index.get(ref)
             if element is None:
@@ -237,10 +268,33 @@ class IntentGraphStore:
         return {
             "root": element_id, "nodes": list(nodes.values()), "edges": list(edges.values()),
             "evidence_events": list(evidence.values()), "unresolved_refs": sorted(unresolved),
+            "active": element_id in index,
         }
+
+    def _historical(self, graph, element_id, history):
+        """The recorded form of an element that is not in the active graph."""
+        row = next((row for row in graph.get("inactive") or []
+                    if row["id"] == element_id), None)
+        if row is None:
+            raise KeyError("intent graph element %s not found" % element_id)
+        if not history:
+            raise KeyError(
+                "intent graph element %s is no longer active state (%s); pass "
+                "history to inspect the retained audit record" % (element_id, row["reason"])
+            )
+        event = next((event for event in self.events.iter_events(
+            kinds={"intent_node", "intent_edge"}, include_quarantined=True)
+            if ((event.get("payload") or {}).get("element") or {}).get("id") == element_id), None)
+        element = dict((event.get("payload") or {}).get("element") or {}) if event else {}
+        element["active"] = False
+        element["inactive_reason"] = row["reason"]
+        return element
 
     def _snapshot_and_events(self):
         return self._materialize(), self._event_index()
+
+    def _invalidated(self, event_index):
+        return invalidated_event_ids(list(event_index.values()))
 
     def _event_index(self):
         events = self._active_branch(list(
@@ -267,6 +321,8 @@ class IntentGraphStore:
                 })
             elif ref in event_index:
                 event = event_index[ref]
+                if ref in self._invalidated(event_index):
+                    problems.append("forgotten_evidence:%s" % ref)
                 if event.get("quarantined") or _event_ceiling(event) <= 0.0:
                     problems.append("tainted_evidence:%s" % ref)
                 resolved.append({
@@ -281,13 +337,32 @@ class IntentGraphStore:
                 problems.append("unresolved_evidence:%s" % ref)
         return resolved, problems
 
-    def _materialize(self):
+    def _materialize(self, now=None):
+        """Project the event log into the graph the user is entitled to see.
+
+        Four passes, in order, each answering one question:
+
+        1. *Was this element validly recorded?*  Structure, provenance and
+           confidence inheritance, unchanged - the immutable record.
+        2. *Does it still have a basis?*  A ``forget`` tombstone invalidates the
+           evidence beneath it, and an element whose whole basis is gone is no
+           longer active state.  Without this pass, deleting a preference from
+           ``user.json`` left it standing here.
+        3. *What is it worth now?*  Recorded confidence is what the evidence
+           supported on the day it was recorded.  Effective confidence applies
+           the same decay the profile applies, and can never exceed the
+           effective confidence of what it stands on.
+        4. *What state is it in?*  A handful of edge types are claims about
+           status rather than descriptions of it.
+        """
         nodes, edges, quarantined, seen = [], [], [], set()
         elements = {}
+        origin = {}
         all_events = self._active_branch(list(
             self.events.iter_events(include_quarantined=True)
         ))
         event_index = {event["event_id"]: event for event in all_events}
+        invalidated = invalidated_event_ids(all_events)
         events = [event for event in all_events
                   if event.get("kind") in {"intent_node", "intent_edge"}]
         for event in events:
@@ -315,11 +390,136 @@ class IntentGraphStore:
             else:
                 edges.append(element)
             elements[element_id] = element
+            origin[element_id] = event
+
+        inactive = self._forget_pass(elements, origin, invalidated)
+        active = [element for element_id, element in elements.items()
+                  if element_id not in inactive]
+        as_of = now or utc_now_ms()
+        self._confidence_pass(active, elements, event_index, as_of)
+        self._status_pass(active)
+        active_ids = {element["id"] for element in active}
         return {
             "schema_version": SCHEMA_VERSION, "generated_at": utc_now_ms(),
-            "nodes": nodes, "edges": edges, "quarantined": quarantined,
+            "as_of": as_of,
+            "nodes": [row for row in nodes if row["id"] in active_ids],
+            "edges": [row for row in edges if row["id"] in active_ids],
+            "quarantined": quarantined,
+            "inactive": [{"id": element_id, "kind": origin[element_id].get("kind"),
+                          "event_id": origin[element_id].get("event_id"),
+                          "reason": reason}
+                         for element_id, reason in inactive.items()],
             "source_event_count": len(events),
         }
+
+    @staticmethod
+    def _forget_pass(elements, origin, invalidated):
+        """Element ids the user's tombstones removed from active state.
+
+        An element is inactive when the event that recorded it was forgotten,
+        when every piece of evidence it stands on was forgotten, or - for an
+        edge - when either endpoint is inactive.  An element resting on nothing
+        was never derived from the forgotten evidence, so it survives; that is
+        the same rule the fold applies to a belief with independent support.
+        """
+        inactive = {}
+
+        def refs_of(element):
+            refs = list(element.get("evidence_refs") or [])
+            if "source" in element:
+                refs = [element["source"], element["target"]] + refs
+            return refs
+
+        for element_id in elements:
+            if origin[element_id].get("event_id") in invalidated:
+                inactive[element_id] = "forgotten_evidence"
+
+        changed = True
+        while changed:
+            changed = False
+            for element_id, element in elements.items():
+                if element_id in inactive:
+                    continue
+                if "source" in element and (element["source"] in inactive
+                                            or element["target"] in inactive):
+                    inactive[element_id] = "endpoint_inactive"
+                    changed = True
+                    continue
+                refs = refs_of(element)
+                if refs and all(ref in invalidated or ref in inactive for ref in refs):
+                    inactive[element_id] = "forgotten_basis"
+                    changed = True
+        return inactive
+
+    @staticmethod
+    def _confidence_pass(active, elements, event_index, as_of):
+        """Attach decayed, evidence-bounded confidence without touching the record.
+
+        ``confidence`` and ``confidence_ceiling`` stay exactly as the immutable
+        event recorded them.  The effective pair is what any consumer deciding
+        how much to believe should read, and it uses the profile's own decay
+        curve so the two projections cannot drift into disagreeing about how
+        stale the same fact is.
+        """
+        effective = {}
+        for element in active:
+            policy = element.get("decay_policy", "standard")
+            recorded = float(element.get("confidence", 0.0))
+            ceilings = [float(element.get("confidence_ceiling", 0.0))]
+            refs = list(element.get("evidence_refs") or [])
+            if "source" in element:
+                refs = [element["source"], element["target"]] + refs
+            for ref in refs:
+                if ref in effective:
+                    ceilings.append(effective[ref])
+                elif ref in elements:
+                    ceilings.append(0.0)   # inactive basis contributes nothing
+                elif ref in event_index:
+                    # Evidence ages on its own clock, not the element's. A node
+                    # pinned at decay_policy "none" must not freeze the
+                    # observation it rests on along with itself.
+                    referenced = event_index[ref]
+                    ref_policy = (referenced.get("observation") or {}).get(
+                        "decay_policy") or policy
+                    ceilings.append(_event_ceiling(referenced) * recency_factor(
+                        referenced.get("ts"), ref_policy, now=as_of))
+            ceiling = min(ceilings)
+            value = min(recorded * recency_factor(
+                element.get("updated_at"), policy, now=as_of), ceiling)
+            element["recorded_confidence"] = recorded
+            element["recorded_ceiling"] = float(element.get("confidence_ceiling", 0.0))
+            element["effective_ceiling"] = round(ceiling, 4)
+            element["effective_confidence"] = round(max(0.0, value), 4)
+            effective[element["id"]] = element["effective_confidence"]
+
+    @staticmethod
+    def _status_pass(active):
+        """Let the four state-changing edge types actually change state.
+
+        A ``falsified_by`` edge that leaves its hypothesis "active" is
+        decoration.  The guard is that an edge may not overrule an element it is
+        weaker than: an agent inference capped at 0.15 cannot retire something
+        the user said directly, however many edges it draws.
+        """
+        index = {element["id"]: element for element in active}
+        for element in active:
+            element["recorded_status"] = element.get("status")
+            element.setdefault("status_reason", None)
+        for edge in active:
+            rule = STATE_EDGES.get(edge.get("type")) if "source" in edge else None
+            if rule is None:
+                continue
+            endpoint, status = rule
+            target = index.get(edge[endpoint])
+            if target is None:
+                continue
+            if edge["effective_confidence"] + 1e-12 < target["effective_confidence"]:
+                edge["status_reason"] = "too weak to change %s (%.3f < %.3f)" % (
+                    target["id"], edge["effective_confidence"],
+                    target["effective_confidence"])
+                continue
+            target["status"] = status
+            target["status_reason"] = "%s by %s" % (status, edge["id"])
 
     @staticmethod
     def _active_branch(events):

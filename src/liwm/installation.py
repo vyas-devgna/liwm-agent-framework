@@ -13,7 +13,17 @@ from .hosts import get_host, instruction_file_for, skills_dir_for
 from .integration import remove_bootstrap, upsert_bootstrap
 from .jsonio import FileLock, canonical_json, read_json, write_json_atomic
 
-PLAN_SCHEMA_VERSION = "0.2.0"
+PLAN_SCHEMA_VERSION = "0.3.0"
+
+#: Plan versions this build can still read.  A receipt written by an earlier
+#: release is the only record of what that release changed, so refusing to read
+#: it would strand the user with an installation they can no longer remove.
+SUPPORTED_PLAN_VERSIONS = ("0.2.0", "0.3.0")
+
+#: One incomplete installation at a time, per home.  The journal is written and
+#: fsynced *before* the first mutation and removed only after the last one, so
+#: its presence is exactly the statement "a plan was in flight".
+JOURNAL_NAME = "installation-journal.json"
 
 
 class InstallationError(RuntimeError):
@@ -226,7 +236,8 @@ def load_plan(path):
 
 
 def _validate_plan(plan):
-    if not isinstance(plan, dict) or plan.get("schema_version") != PLAN_SCHEMA_VERSION:
+    if (not isinstance(plan, dict)
+            or plan.get("schema_version") not in SUPPORTED_PLAN_VERSIONS):
         raise InstallationError("unsupported installation plan")
     if plan.get("plan_id") != _plan_id(plan):
         raise InstallationError("installation plan hash does not match its contents")
@@ -319,6 +330,124 @@ def verify_plan(plan):
     return {"ok": not failures, "plan_id": plan["plan_id"], "failures": failures}
 
 
+
+def journal_path(home):
+    return Path(home) / JOURNAL_NAME
+
+
+def _write_journal(home, body):
+    """Persist the journal durably.  A rollback handler is not a guarantee.
+
+    ``apply_plan`` restores what it changed when it raises, which covers a bad
+    plan or a permission error.  It does nothing at all if the machine loses
+    power between file three and file four, because the handler never runs.
+    The journal is what survives that: it names every target, its state before
+    the change and its intended state after, so a later ``liwm install repair``
+    can finish the job or undo it without guessing.
+    """
+    path = journal_path(home)
+    payload = canonical_json(body).encode("utf-8") + b"\n"
+    _atomic_write(path, payload)
+    return path
+
+
+def read_journal(home):
+    path = journal_path(home)
+    if not path.is_file():
+        return None
+    try:
+        return read_json(path)
+    except (ValueError, OSError):
+        return {"corrupt": True, "path": str(path)}
+
+
+def _journal_body(plan, done=()):
+    return {
+        "schema_version": PLAN_SCHEMA_VERSION,
+        "plan_id": plan["plan_id"],
+        "operation": plan["operation"],
+        "host": plan["host"],
+        "home": plan["home"],
+        "plan": plan,
+        "completed_targets": list(done),
+    }
+
+
+def inspect_installation(home):
+    """Classify an interrupted installation without changing anything."""
+    journal = read_journal(home)
+    if journal is None:
+        return {"interrupted": False, "steps": [], "repairable": True, "problems": []}
+    if journal.get("corrupt"):
+        return {"interrupted": True, "steps": [], "repairable": False,
+                "problems": ["installation journal is unreadable"], "journal": journal}
+    plan = journal.get("plan") or {}
+    steps, problems = [], []
+    for step in plan.get("steps") or []:
+        actual = _state(step["target"])
+        if actual == step["result"]:
+            state = "applied"
+        elif actual == step["precondition"]:
+            state = "pending"
+        else:
+            state = "unrecognised"
+            problems.append("%s is in neither its original nor its planned state"
+                            % step["target"])
+        steps.append({"target": step["target"], "state": state,
+                      "has_backup": bool(step.get("backup")
+                                         and Path(step["backup"]).is_file())})
+    return {
+        "interrupted": True,
+        "plan_id": journal.get("plan_id"),
+        "operation": journal.get("operation"),
+        "host": journal.get("host"),
+        "steps": steps,
+        "applied": sum(1 for row in steps if row["state"] == "applied"),
+        "pending": sum(1 for row in steps if row["state"] == "pending"),
+        # Ambiguity is not resolved by picking the likelier story.  Something
+        # else edited the file, and overwriting it either way loses whatever
+        # that was.
+        "repairable": not problems,
+        "problems": problems,
+    }
+
+
+def repair_installation(home, rollback=False):
+    """Finish or undo an interrupted plan, converging on one of its two states."""
+    report = inspect_installation(home)
+    if not report["interrupted"]:
+        return dict(report, repaired=False, reason="no interrupted installation")
+    if not report["repairable"]:
+        raise InstallationError(
+            "refusing to repair: %s" % "; ".join(report["problems"] or ["unknown state"]))
+    journal = read_journal(home)
+    plan = journal["plan"]
+    if not rollback:
+        result = apply_plan(plan)
+        return dict(report, repaired=True, direction="forward", verification=result)
+
+    changed = []
+    with FileLock(Path(home) / ".installation.lock", timeout=30.0):
+        for step in plan["steps"]:
+            target = Path(step["target"])
+            if _state(target) == step["precondition"]:
+                continue
+            if step["precondition"]["exists"]:
+                backup = step.get("backup")
+                if not backup or not Path(backup).is_file():
+                    raise InstallationError(
+                        "cannot roll back %s: its backup is missing" % target)
+                payload = Path(backup).read_bytes()
+                if _hash(payload) != step["precondition"]["sha256"]:
+                    raise InstallationError("backup for %s does not match the original" % target)
+                _atomic_write(target, payload)
+            else:
+                target.unlink(missing_ok=True)
+            changed.append(str(target))
+        journal_path(home).unlink(missing_ok=True)
+    return dict(report, repaired=True, direction="rollback", restored=changed)
+
+
 def apply_plan(plan):
     """Apply a plan transactionally after checking every target and source."""
     _validate_plan(plan)
@@ -352,6 +481,8 @@ def apply_plan(plan):
 
         receipt = _receipt_path(home, plan["host"])
         receipt_original = receipt.read_bytes() if receipt.is_file() else None
+        applied = []
+        _write_journal(home, _journal_body(plan))
         try:
             for step, payload, original in prepared:
                 if payload is None and _state(step["target"]) == step["result"]:
@@ -366,6 +497,8 @@ def apply_plan(plan):
                 else:
                     _atomic_write(target, payload)
                 changed.append((target, original))
+                applied.append(step["target"])
+                _write_journal(home, _journal_body(plan, applied))
             if plan["operation"] == "install":
                 payload = canonical_json(plan).encode("utf-8") + b"\n"
                 _atomic_write(receipt, payload)
@@ -385,7 +518,9 @@ def apply_plan(plan):
                     target.unlink(missing_ok=True)
                 else:
                     _atomic_write(target, original)
+            journal_path(home).unlink(missing_ok=True)
             raise
+        journal_path(home).unlink(missing_ok=True)
 
     report = verify_plan(plan)
     report["changed"] = sum(1 for target, _ in changed if target != receipt)

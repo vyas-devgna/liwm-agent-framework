@@ -33,7 +33,7 @@ __all__ = [
     "STAGE_WEIGHTS",
 ]
 
-MODES = ("off", "low", "medium", "high", "auto")
+MODES = ("off", "silent", "low", "medium", "high", "auto")
 
 #: Behavioural contract per mode.  ``liwm.evaluation`` asserts that these stay
 #: behaviourally distinguishable; tests fail if two modes collapse together.
@@ -50,6 +50,28 @@ MODE_PROFILES = {
         "use_profile": False,
         "record_evidence": False,
         "summary": "LIWM is dormant. No profile consultation, no learning, no questions.",
+    },
+    # The research ablation, and the only honest one.  A study comparing "LIWM"
+    # against "LIWM with questions disabled" cannot use OFF, because OFF also
+    # stops consulting the profile and stops learning, so it measures three
+    # changes at once and attributes all of them to elicitation.  SILENT keeps
+    # the profile and the learning and removes only the asking.
+    "silent": {
+        "mode": "silent",
+        "max_questions": 0,
+        "min_utility": 99.0,
+        "experiential_ratio": 0.0,
+        "technical_ratio": 0.0,
+        "styles": (),
+        "one_at_a_time": True,
+        "adaptive_continue": False,
+        "use_profile": True,
+        "record_evidence": True,
+        "summary": (
+            "Consult the profile and keep learning, but never ask. State "
+            "assumptions instead of resolving them. This is research condition "
+            "E, the no-elicitation ablation - not the same thing as OFF."
+        ),
     },
     "low": {
         "mode": "low",

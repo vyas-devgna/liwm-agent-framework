@@ -88,3 +88,9 @@ scratch/
 tmp/
 *.tmp
 *.log
+
+# Pasted session transcripts. One of these was swept into a commit by `git add
+# -A`: 264KB of conversation and absolute machine paths, in a public repo.
+*local-command-caveat*.txt
+dist1/
+dist2/

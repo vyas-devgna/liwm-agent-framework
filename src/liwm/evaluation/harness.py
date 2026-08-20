@@ -16,7 +16,6 @@ Two studies, both fully local and deterministic:
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
 
 from ..context import build_runtime_context
 from ..feedback import record_feedback

@@ -3,7 +3,7 @@ name: liwm-self-improvement
 description: Review, replay and gate LIWM's own behavioural rule changes. Use for "LIWM review", or when deciding whether a proposed lesson should change future behaviour.
 license: MIT
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   framework: liwm
 ---
 

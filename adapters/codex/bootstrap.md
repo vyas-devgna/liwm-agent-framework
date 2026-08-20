@@ -1,4 +1,4 @@
-<!-- LIWM:BEGIN v0.2.0 -->
+<!-- LIWM:BEGIN v0.3.0 -->
 LIWM is installed. For non-trivial work, consult the compact LIWM context with
 `{{LIWM_COMMAND}} context --json` and use AUTO unless the user selects
 LOW, MEDIUM, HIGH, or OFF. Apply only relevant high-confidence preferences;

@@ -28,8 +28,8 @@ Quick start (CLI)::
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
-__schema_version__ = "0.2.0"
+__version__ = "0.3.0"
+__schema_version__ = "0.3.0"
 __all__ = [
     "__version__",
     "__schema_version__",
@@ -41,11 +41,11 @@ __all__ = [
     "ProjectStore",
 ]
 
-from .events import EventStore  # noqa: E402
-from .intent_graph import IntentGraphStore  # noqa: E402
-from .paths import ensure_layout, liwm_home  # noqa: E402
-from .profile import ProfileStore  # noqa: E402
-from .projects import ProjectStore  # noqa: E402
+from .events import EventStore
+from .intent_graph import IntentGraphStore
+from .paths import ensure_layout, liwm_home
+from .profile import ProfileStore
+from .projects import ProjectStore
 
 
 class Liwm:

@@ -19,7 +19,7 @@ from .prediction import brier, calibration_bins, log_loss
 
 __all__ = ["ROLLING_WINDOW", "compute_metrics", "MetricsStore", "improvement_trend"]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 #: How many recent outcomes dominate the rolling figures.
 ROLLING_WINDOW = 50
@@ -29,6 +29,27 @@ def _rate(numerator, denominator):
     if not denominator:
         return None
     return round(numerator / denominator, 4)
+
+
+#: Below this, a reliability diagram is describing noise.  The number is
+#: reported anyway, next to the warning, because hiding it invites someone to
+#: recompute it themselves without one.
+ECE_MIN_SAMPLES = 30
+
+
+def _evaluator_key(payload):
+    """Evaluator label, keeping unverified historical outcomes distinguishable.
+
+    An outcome resolved before labels had to be derived from their evidence was
+    never checked against anything.  Folding those into the same bucket as
+    verified ones would make the strongest calibration figure the least
+    trustworthy one.
+    """
+    evaluator = payload.get("evaluator_type") or "unknown"
+    if (evaluator == "observed_human_outcome"
+            and payload.get("outcome_binding") != "structured_feedback_event"):
+        return "observed_human_outcome_unverified"
+    return evaluator
 
 
 def _ece(pairs, bins=10):
@@ -59,6 +80,7 @@ def compute_metrics(store, window=ROLLING_WINDOW):
         "artifacts": 0,
         "revisions": 0,
         "predictions": 0,
+        "predictions_made": 0,
         "predictions_resolved": 0,
         "quarantined_events": 0,
         "privacy_refusals": 0,
@@ -149,6 +171,8 @@ def compute_metrics(store, window=ROLLING_WINDOW):
                 counters["assumptions_wrong"] += 1
             if payload.get("channel") in ("outcome", "behavioral", "repeated_behavioral"):
                 counters["inferred_corrections"] += 1
+        elif kind == "prediction":
+            counters["predictions_made"] += 1
         elif kind == "outcome" and payload.get("target_type") == "categorical_preference":
             counters["predictions_resolved"] += 1
             categorical_outcomes.append(payload)
@@ -157,7 +181,7 @@ def compute_metrics(store, window=ROLLING_WINDOW):
             pair = (payload.get("predicted_acceptance"), payload.get("actual_first_pass"))
             prediction_pairs.append(pair)
             calibration_by_domain.setdefault(e.get("domain") or "<none>", []).append(pair)
-            calibration_by_evaluator.setdefault(payload.get("evaluator_type") or "unknown", []).append(pair)
+            calibration_by_evaluator.setdefault(_evaluator_key(payload), []).append(pair)
         elif kind == "scope_promotion":
             counters["scope_promotions"] += 1
             if payload.get("cross_domain"):
@@ -231,6 +255,11 @@ def compute_metrics(store, window=ROLLING_WINDOW):
             ),
             "bins": calibration_bins(prediction_pairs),
             "expected_calibration_error": _ece(prediction_pairs),
+            "expected_calibration_error_reliable": len(prediction_pairs) >= ECE_MIN_SAMPLES,
+            "resolution_rate": _rate(counters["predictions_resolved"],
+                                     counters["predictions_made"]),
+            "unresolved_predictions": max(
+                0, counters["predictions_made"] - counters["predictions_resolved"]),
             "top1_preference_accuracy": _rate(
                 len([row for row in categorical_outcomes if row.get("top1_correct")]),
                 len(categorical_outcomes),

@@ -38,7 +38,7 @@ __all__ = [
     "SelfImprovementStore",
 ]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 CANDIDATE_STATES = (
     "proposed",
@@ -76,6 +76,16 @@ PROMOTION_GATES = {
     # committed before the user reacted and resolved afterwards against what they
     # actually did.  Without them, replay is the only witness and is not enough.
     "min_resolved_outcomes": 5,
+    # Five outcomes from one afternoon is one afternoon, not a longitudinal
+    # result.  A behavioural change earns promotion by holding up on separate
+    # occasions, which is also what stops a single unusually agreeable session
+    # from carrying a candidate through.
+    "min_outcome_sessions": 3,
+    # ...and those outcomes must come from interactions where the candidate
+    # actually produced what the user reacted to.  Replay is a model, shadow
+    # evaluation is a model with better manners, and neither is a person
+    # responding to the candidate's work.  See :mod:`liwm.experiments`.
+    "require_user_facing_exposure": True,
 }
 
 
@@ -312,30 +322,50 @@ class SelfImprovementStore:
         # record in LIWM of a commitment made before the user reacted.
         required_outcomes = int(gates.get("min_resolved_outcomes", 0) or 0)
         resolved_outcomes = None
+        exposure = None
         if required_outcomes:
             if store is None:
                 passed = False
                 reasons.append("observed-outcome gate could not be evaluated: "
                                "no profile store supplied")
             else:
-                observed = {
-                    payload.get("prediction_id"): payload
-                    for event in store.events.iter_events(kinds={"outcome"})
-                    for payload in [event.get("payload") or {}]
-                    if payload.get("evaluator_type") == "observed_human_outcome"
-                    and event.get("provenance") == "explicit_user_review"
-                    and payload.get("candidate_id") == candidate.get("id")
-                    and payload.get("evidence_event_id")
-                    and parse_ts(event.get("ts")) >= parse_ts(candidate.get("created_at"))
-                    and payload.get("prediction_id")
-                }
+                if gates.get("require_user_facing_exposure", True):
+                    from .experiments import ExperimentStore
+                    exposure = ExperimentStore(store.home).exposure_for(
+                        store, candidate.get("id"))
+                observed = {}
+                sessions = set()
+                for event in store.events.iter_events(kinds={"outcome"}):
+                    payload = event.get("payload") or {}
+                    if (payload.get("evaluator_type") == "observed_human_outcome"
+                            # Only outcomes whose label was read out of the
+                            # evidence count.  A 0.2 outcome predates that rule
+                            # and was never checked against anything, so it is
+                            # not independent evidence of a human reacting.
+                            and payload.get("outcome_binding") == "structured_feedback_event"
+                            and event.get("provenance") == "explicit_user_review"
+                            and payload.get("candidate_id") == candidate.get("id")
+                            and payload.get("evidence_event_id")
+                            and payload.get("prediction_id")
+                            and parse_ts(event.get("ts"))
+                            >= parse_ts(candidate.get("created_at"))):
+                        if exposure is not None and payload.get("unit") not in exposure:
+                            continue
+                        observed[payload["prediction_id"]] = payload
+                        sessions.add(event.get("session_id"))
                 resolved_outcomes = len(observed)
+                required_sessions = int(gates.get("min_outcome_sessions", 0) or 0)
                 if resolved_outcomes < required_outcomes:
                     passed = False
                     reasons.append(
-                        "only %d resolved prediction(s) behind this; need %d, or the "
-                        "evidence is replay scoring itself"
+                        "only %d evidence-bound outcome(s) from interactions where the "
+                        "candidate produced the work; need %d. Replay and shadow "
+                        "evaluation do not count: nobody reacted to the candidate."
                         % (resolved_outcomes, required_outcomes))
+                elif len({s for s in sessions if s}) < required_sessions:
+                    passed = False
+                    reasons.append("observed outcomes span %d session(s), need %d"
+                                   % (len({s for s in sessions if s}), required_sessions))
                 elif sum(int(row.get("actual_first_pass") or 0) for row in observed.values()) \
                         / resolved_outcomes < 0.6:
                     passed = False
@@ -366,6 +396,7 @@ class SelfImprovementStore:
             "reasons": reasons,
             "episodes": episodes,
             "resolved_outcomes": resolved_outcomes,
+            "user_facing_units": None if exposure is None else len(exposure),
             "primary_delta": primary,
             "regressions": regressions,
             "gates": gates,

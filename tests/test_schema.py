@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
 
 from helpers import REPO_ROOT, LiwmTestCase
 
 from liwm.config import DEFAULT_CONFIG
 from liwm.migrate import CURRENT_SCHEMA_VERSION, migrate_profile, needs_migration, version_tuple
+from liwm.jsonio import write_json_atomic
 from liwm.profile import empty_profile
 from liwm.schema import SchemaStore, ValidationError, validate, validate_or_raise
 
@@ -269,3 +269,63 @@ class TestMigration(LiwmTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpgradingFromAZeroTwoHome(LiwmTestCase):
+    """A home written by 0.2 must open, verify and keep its evidence."""
+
+    def test_a_zero_two_profile_migrates_without_touching_evidence(self):
+        from liwm.migrate import CURRENT_SCHEMA_VERSION, migrate_home, needs_migration
+
+        self.observe("preferences.upgrade", "yes")
+        before = {event["event_id"]
+                  for event in self.store.events.iter_events(include_quarantined=True)}
+        profile = self.store.load()
+        profile["schema_version"] = "0.2.0"
+        write_json_atomic(self.home / "user.json", profile)
+
+        self.assertTrue(needs_migration("0.2.0"))
+        report = migrate_home(self.home)
+        self.assertTrue(report["migrated"])
+
+        self.assertEqual(self.store.load()["schema_version"], CURRENT_SCHEMA_VERSION)
+        self.assertEqual(before, {
+            event["event_id"]
+            for event in self.store.events.iter_events(include_quarantined=True)})
+        self.assertTrue(self.store.events.verify()["ok"])
+        self.assertEqual(self.belief("preferences.upgrade", "yes")["value"], "yes")
+
+    def test_migration_rebuilds_a_zero_two_intent_graph(self):
+        from liwm.intent_graph import IntentGraphStore
+        from liwm.migrate import migrate_home
+        from liwm.schema import SchemaStore
+
+        graph = IntentGraphStore(self.home)
+        graph.add_node("goal", "Ship 0.3", "direct_user_message", 0.9)
+        stale = json.loads((self.home / "intent-graph.json").read_text())
+        for row in stale["nodes"]:
+            for field in ("effective_confidence", "effective_ceiling",
+                          "recorded_confidence", "recorded_ceiling", "recorded_status"):
+                row.pop(field, None)
+        stale.pop("as_of", None)
+        stale["schema_version"] = "0.2.0"
+        write_json_atomic(self.home / "intent-graph.json", stale)
+        self.assertNotEqual(SchemaStore().validate(stale, "intent-graph"), [])
+
+        profile = self.store.load()
+        profile["schema_version"] = "0.2.0"
+        write_json_atomic(self.home / "user.json", profile)
+        migrate_home(self.home)
+
+        rebuilt = json.loads((self.home / "intent-graph.json").read_text())
+        self.assertEqual(SchemaStore().validate(rebuilt, "intent-graph"), [])
+        self.assertEqual(len(rebuilt["nodes"]), 1)
+
+    def test_a_zero_two_install_receipt_can_still_be_uninstalled(self):
+        # Bumping the plan version would have stranded anyone who installed
+        # with 0.2: the receipt is the only record of what that release
+        # changed, and refusing to read it leaves an installation that cannot
+        # be removed.
+        from liwm.installation import PLAN_SCHEMA_VERSION, SUPPORTED_PLAN_VERSIONS
+        self.assertIn("0.2.0", SUPPORTED_PLAN_VERSIONS)
+        self.assertIn(PLAN_SCHEMA_VERSION, SUPPORTED_PLAN_VERSIONS)

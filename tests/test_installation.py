@@ -171,3 +171,105 @@ class TestInstallationLifecycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCrashRecovery(TestInstallationLifecycle):
+    """Rollback that lives in an `except` block does not survive a kill -9.
+
+    `apply_plan` restored what it had changed when it raised, which covers a
+    bad plan or a permission error and covers nothing at all if the machine
+    loses power between file three and file four. These tests kill the process
+    at each individual mutation, then check that repair converges on one of the
+    plan's two legitimate states.
+    """
+
+    def _crash_after(self, plan, step_index):
+        """Apply *plan* in a child process that dies after *step_index* writes."""
+        import subprocess
+        import sys
+        # Count only writes to plan targets. Backups and the journal itself are
+        # writes too, and dying between the backup and the target it protects is
+        # exactly the window the journal has to cover.
+        script = (
+            "import sys, os\n"
+            "sys.path.insert(0, %r)\n"
+            "import liwm.installation as inst\n"
+            "targets = set(%r)\n"
+            "budget = [%d]\n"
+            "original = inst._atomic_write\n"
+            "def counting(path, payload):\n"
+            "    if str(path) not in targets:\n"
+            "        return original(path, payload)\n"
+            "    if budget[0] <= 0:\n"
+            "        os._exit(9)\n"
+            "    budget[0] -= 1\n"
+            "    return original(path, payload)\n"
+            "inst._atomic_write = counting\n"
+            "inst.apply_plan(inst.load_plan(%r))\n"
+        ) % (str(Path(__file__).resolve().parent.parent / "src"),
+             [step["target"] for step in plan["steps"]], step_index, str(self.plan_path))
+        return subprocess.run([sys.executable, "-c", script],
+                              capture_output=True, check=False)
+
+    def setUp(self):
+        super().setUp()
+        self.plan = create_install_plan("test-host", self.home, BLOCK, self.source)
+        self.plan_path = self.root / "plan.json"
+        save_plan(self.plan, self.plan_path)
+        self.originals = {step["target"]: (Path(step["target"]).read_bytes()
+                                           if Path(step["target"]).is_file() else None)
+                          for step in self.plan["steps"]}
+
+    def test_a_crash_at_every_step_leaves_a_repairable_journal(self):
+        from liwm.installation import inspect_installation, repair_installation
+        for step_index in range(len(self.plan["steps"])):
+            self.setUp()
+            proc = self._crash_after(self.plan, step_index)
+            self.assertNotEqual(proc.returncode, 0, "the child was supposed to die")
+
+            report = inspect_installation(self.home)
+            self.assertTrue(report["interrupted"], "no journal after crash %d" % step_index)
+            self.assertTrue(report["repairable"], report["problems"])
+            self.assertEqual(report["applied"], step_index)
+
+            repair_installation(self.home)
+            self.assertTrue(verify_plan(self.plan)["ok"])
+            self.assertIsNone(inspect_installation(self.home).get("plan_id"))
+
+    def test_repair_can_roll_back_instead_of_forward(self):
+        from liwm.installation import inspect_installation, repair_installation
+        self._crash_after(self.plan, 1)
+        self.assertTrue(inspect_installation(self.home)["interrupted"])
+
+        repair_installation(self.home, rollback=True)
+
+        for target, original in self.originals.items():
+            if original is None:
+                self.assertFalse(Path(target).is_file(), target)
+            else:
+                self.assertEqual(Path(target).read_bytes(), original, target)
+        self.assertFalse(inspect_installation(self.home)["interrupted"])
+
+    def test_repair_refuses_when_a_target_is_in_neither_state(self):
+        from liwm.installation import inspect_installation, repair_installation
+        self._crash_after(self.plan, 1)
+        Path(self.plan["steps"][1]["target"]).write_bytes(b"someone else edited this\n")
+
+        report = inspect_installation(self.home)
+        self.assertFalse(report["repairable"])
+        with self.assertRaises(InstallationError):
+            repair_installation(self.home)
+
+    def test_a_clean_apply_leaves_no_journal_behind(self):
+        from liwm.installation import inspect_installation, journal_path
+        apply_plan(self.plan)
+        self.assertFalse(journal_path(self.home).exists())
+        self.assertFalse(inspect_installation(self.home)["interrupted"])
+
+    def test_repair_is_idempotent(self):
+        from liwm.installation import repair_installation
+        self._crash_after(self.plan, 1)
+        repair_installation(self.home)
+        again = repair_installation(self.home)
+        self.assertFalse(again["repaired"])
+        self.assertTrue(verify_plan(self.plan)["ok"])

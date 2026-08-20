@@ -397,7 +397,7 @@ class TestReplayCannotPromoteAlone(LiwmTestCase):
         _, verdict = si.promote(candidate["id"], store=self.store)
 
         self.assertFalse(verdict["passed"])
-        self.assertTrue(any("resolved prediction" in r for r in verdict["reasons"]),
+        self.assertTrue(any("evidence-bound outcome" in r for r in verdict["reasons"]),
                         verdict["reasons"])
         self.assertEqual(si.active_rules(), [])
 

@@ -3,7 +3,7 @@ name: liwm-question-planner
 description: Decide whether to ask anything at all, and if so what. Use when weighing a clarifying question against making a reversible assumption.
 license: MIT
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   framework: liwm
 ---
 

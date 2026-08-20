@@ -4,104 +4,385 @@
   "title": "LIWM intent state graph",
   "description": "A compact, rebuildable projection of typed intent node and edge events. It complements rather than replaces user.json.",
   "type": "object",
-  "required": ["schema_version", "generated_at", "nodes", "edges", "source_event_count"],
+  "required": [
+    "schema_version",
+    "generated_at",
+    "nodes",
+    "edges",
+    "source_event_count",
+    "as_of"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-    "generated_at": { "type": "string", "format": "date-time" },
-    "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
-    "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
-    "quarantined": { "type": "array", "items": { "$ref": "#/$defs/quarantine" } },
-    "source_event_count": { "type": "integer", "minimum": 0 }
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "quarantined": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/quarantine"
+      }
+    },
+    "source_event_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instant the effective confidences and statuses were computed for."
+    },
+    "inactive": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/inactive"
+      },
+      "description": "Elements a forget tombstone removed from active state. Identity and reason only: the labels and values stay in the immutable event log, not in this projection."
+    }
   },
   "$defs": {
     "common": {
       "type": "object",
       "required": [
-        "id", "type", "scope", "scope_key", "requested_confidence", "confidence",
-        "confidence_ceiling", "evidence_refs", "created_at", "updated_at",
-        "provenance", "provenance_chain", "status", "decay_policy"
+        "id",
+        "type",
+        "scope",
+        "scope_key",
+        "requested_confidence",
+        "confidence",
+        "confidence_ceiling",
+        "evidence_refs",
+        "created_at",
+        "updated_at",
+        "provenance",
+        "provenance_chain",
+        "status",
+        "decay_policy",
+        "recorded_confidence",
+        "recorded_ceiling",
+        "recorded_status",
+        "effective_confidence",
+        "effective_ceiling"
       ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "type": "string" },
-        "scope": { "enum": ["global", "domain", "project", "session"] },
-        "scope_key": { "type": ["string", "null"] },
-        "requested_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "confidence_ceiling": { "type": "number", "minimum": 0, "maximum": 1 },
-        "evidence_refs": { "type": "array", "items": { "type": "string" } },
-        "created_at": { "type": "string", "format": "date-time" },
-        "updated_at": { "type": "string", "format": "date-time" },
-        "provenance": { "type": "string" },
-        "provenance_chain": { "type": "array", "items": { "type": "string" } },
-        "status": {
-          "enum": ["active", "hypothesis", "validated", "falsified", "superseded", "rejected"]
+        "id": {
+          "type": "string"
         },
-        "decay_policy": { "enum": ["none", "slow", "standard", "volatile", "session"] }
+        "type": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "global",
+            "domain",
+            "project",
+            "session"
+          ]
+        },
+        "scope_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requested_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence_ceiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "provenance": {
+          "type": "string"
+        },
+        "provenance_chain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "enum": [
+            "active",
+            "hypothesis",
+            "validated",
+            "falsified",
+            "superseded",
+            "rejected"
+          ]
+        },
+        "decay_policy": {
+          "enum": [
+            "none",
+            "slow",
+            "standard",
+            "volatile",
+            "session"
+          ]
+        },
+        "recorded_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "What the evidence supported when the element was recorded. Immutable."
+        },
+        "recorded_ceiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "recorded_status": {
+          "enum": [
+            "active",
+            "hypothesis",
+            "validated",
+            "falsified",
+            "superseded",
+            "rejected"
+          ]
+        },
+        "effective_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Decayed and bounded by the current effective confidence of the evidence beneath it. Read this to decide how much to believe."
+        },
+        "effective_ceiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "node": {
       "allOf": [
-        { "$ref": "#/$defs/common" },
+        {
+          "$ref": "#/$defs/common"
+        },
         {
           "type": "object",
-          "required": ["label", "value"],
+          "required": [
+            "label",
+            "value"
+          ],
           "additionalProperties": false,
           "properties": {
-            "id": { "type": "string", "pattern": "^ign_[0-9a-f]{8,}$" },
+            "id": {
+              "type": "string",
+              "pattern": "^ign_[0-9a-f]{8,}$"
+            },
             "type": {
               "enum": [
-                "goal", "anti_goal", "preference", "constraint", "value",
-                "desired_experience", "rejected_direction", "uncertainty", "assumption",
-                "decision", "outcome", "artifact", "intent_hypothesis"
+                "goal",
+                "anti_goal",
+                "preference",
+                "constraint",
+                "value",
+                "desired_experience",
+                "rejected_direction",
+                "uncertainty",
+                "assumption",
+                "decision",
+                "outcome",
+                "artifact",
+                "intent_hypothesis"
               ]
             },
-            "label": { "type": "string", "minLength": 1 },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
             "value": {},
-            "scope": {}, "scope_key": {}, "requested_confidence": {}, "confidence": {},
-            "confidence_ceiling": {}, "evidence_refs": {}, "created_at": {},
-            "updated_at": {}, "provenance": {}, "provenance_chain": {}, "status": {},
-            "decay_policy": {}
+            "scope": {},
+            "scope_key": {},
+            "requested_confidence": {},
+            "confidence": {},
+            "confidence_ceiling": {},
+            "evidence_refs": {},
+            "created_at": {},
+            "updated_at": {},
+            "provenance": {},
+            "provenance_chain": {},
+            "status": {},
+            "decay_policy": {},
+            "recorded_confidence": {},
+            "recorded_ceiling": {},
+            "recorded_status": {},
+            "effective_confidence": {},
+            "effective_ceiling": {},
+            "status_reason": {}
           }
         }
       ]
     },
     "edge": {
       "allOf": [
-        { "$ref": "#/$defs/common" },
+        {
+          "$ref": "#/$defs/common"
+        },
         {
           "type": "object",
-          "required": ["source", "target"],
+          "required": [
+            "source",
+            "target"
+          ],
           "additionalProperties": false,
           "properties": {
-            "id": { "type": "string", "pattern": "^ige_[0-9a-f]{8,}$" },
+            "id": {
+              "type": "string",
+              "pattern": "^ige_[0-9a-f]{8,}$"
+            },
             "type": {
               "enum": [
-                "supports", "conflicts_with", "conditional_on", "implies", "derived_from",
-                "motivates", "rejects", "supersedes", "predicts", "validated_by",
-                "falsified_by", "implemented_by", "applies_in", "transfers_to"
+                "supports",
+                "conflicts_with",
+                "conditional_on",
+                "implies",
+                "derived_from",
+                "motivates",
+                "rejects",
+                "supersedes",
+                "predicts",
+                "validated_by",
+                "falsified_by",
+                "implemented_by",
+                "applies_in",
+                "transfers_to"
               ]
             },
-            "source": { "type": "string", "pattern": "^ign_[0-9a-f]{8,}$" },
-            "target": { "type": "string", "pattern": "^ign_[0-9a-f]{8,}$" },
-            "scope": {}, "scope_key": {}, "requested_confidence": {}, "confidence": {},
-            "confidence_ceiling": {}, "evidence_refs": {}, "created_at": {},
-            "updated_at": {}, "provenance": {}, "provenance_chain": {}, "status": {},
-            "decay_policy": {}
+            "source": {
+              "type": "string",
+              "pattern": "^ign_[0-9a-f]{8,}$"
+            },
+            "target": {
+              "type": "string",
+              "pattern": "^ign_[0-9a-f]{8,}$"
+            },
+            "scope": {},
+            "scope_key": {},
+            "requested_confidence": {},
+            "confidence": {},
+            "confidence_ceiling": {},
+            "evidence_refs": {},
+            "created_at": {},
+            "updated_at": {},
+            "provenance": {},
+            "provenance_chain": {},
+            "status": {},
+            "decay_policy": {},
+            "recorded_confidence": {},
+            "recorded_ceiling": {},
+            "recorded_status": {},
+            "effective_confidence": {},
+            "effective_ceiling": {},
+            "status_reason": {}
           }
         }
       ]
     },
     "quarantine": {
       "type": "object",
-      "required": ["event_id", "kind", "reason"],
+      "required": [
+        "event_id",
+        "kind",
+        "reason"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": ["string", "null"] },
-        "event_id": { "type": "string" },
-        "kind": { "enum": ["intent_node", "intent_edge"] },
-        "reason": { "type": "string" }
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "intent_node",
+            "intent_edge"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "inactive": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "event_id",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "intent_node",
+            "intent_edge"
+          ]
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "forgotten_evidence",
+            "forgotten_basis",
+            "endpoint_inactive"
+          ]
+        }
       }
     }
   }

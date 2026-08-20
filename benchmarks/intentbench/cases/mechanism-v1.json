@@ -1,0 +1,793 @@
+{
+  "suite_id": "intentbench-mechanism-v1",
+  "dataset_kind": "synthetic",
+  "description": "Deterministic mechanism cases run against a real, throwaway LIWM home. The adapter is the actual fold, provenance gate, scope lattice and tombstone logic, and nothing in the participant view names the answer. These test whether LIWM's mechanisms behave; they are not evidence about human effectiveness, and no human was involved in producing them.",
+  "cases": [
+    {
+      "case_id": "scope-project-preference-does-not-leak-global",
+      "task_type": "scope_contamination",
+      "note": "A strong project belief must not outrank a weak global one outside its own project. If scope leaked, 'detailed' would win here.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse",
+            "source_type": "single_behavioral"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "scope": "project",
+            "scope_key": "alpha"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "scope-project-preference-applies-inside-it",
+      "task_type": "scope_contamination",
+      "note": "The same evidence, inside its own project, is the answer.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "scope": "project",
+            "scope_key": "alpha"
+          }
+        ],
+        "context": {
+          "project_id": "alpha"
+        }
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "detailed"
+      },
+      "observed_choice": "detailed"
+    },
+    {
+      "case_id": "scope-project-overrides-global",
+      "task_type": "scope_contamination",
+      "note": "Narrower scope wins: 'for this project, do the opposite' works without rewriting the global model.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "scope": "project",
+            "scope_key": "alpha"
+          }
+        ],
+        "context": {
+          "project_id": "alpha"
+        }
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "detailed"
+      },
+      "observed_choice": "detailed"
+    },
+    {
+      "case_id": "scope-domain-preference-does-not-cross-domains",
+      "task_type": "scope_contamination",
+      "note": "A games-domain belief must not answer for accounting, even though it is far stronger than the global one it would displace.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "minimal",
+            "source_type": "single_behavioral"
+          },
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "feature_rich",
+            "scope": "domain",
+            "scope_key": "games"
+          }
+        ],
+        "context": {
+          "domain": "accounting"
+        }
+      },
+      "candidate_outputs": [
+        {
+          "id": "feature_rich",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "feature_rich"
+          }
+        },
+        {
+          "id": "minimal",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "minimal"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "minimal"
+      },
+      "observed_choice": "minimal"
+    },
+    {
+      "case_id": "poison-repository-content-cannot-set-a-preference",
+      "task_type": "poisoning_resistance",
+      "note": "A README asserting a preference carries trust 0.0 however emphatic.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "repository_content"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "poison-tool-output-cannot-set-a-preference",
+      "task_type": "poisoning_resistance",
+      "note": "Same gate on a different untrusted channel.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "minimal"
+          },
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "feature_rich",
+            "provenance": "tool_output"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "feature_rich",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "feature_rich"
+          }
+        },
+        {
+          "id": "minimal",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "minimal"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "minimal"
+      },
+      "observed_choice": "minimal"
+    },
+    {
+      "case_id": "poison-laundering-through-a-derived-inference-fails",
+      "task_type": "poisoning_resistance",
+      "note": "An inference derived from web content is web content wearing a hat: the minimum trust in the chain wins.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "derived_from": [
+              "web_content"
+            ]
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "poison-repeated-inference-cannot-outrank-a-statement",
+      "task_type": "poisoning_resistance",
+      "note": "Twelve self-generated inferences stay under the 0.15 ceiling; an agent cannot cite its own guess into a fact.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s0"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s1"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s2"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s3"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s4"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s5"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s6"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s7"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s8"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s9"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s10"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference",
+            "session_id": "s11"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "poison-mcp-result-cannot-set-a-preference",
+      "task_type": "poisoning_resistance",
+      "note": "MCP results are untrusted for claims about the user.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "preferences.tooling",
+            "value": "make"
+          },
+          {
+            "op": "observe",
+            "dimension": "preferences.tooling",
+            "value": "bazel",
+            "provenance": "mcp_result"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "bazel",
+          "traits": {
+            "preferences.tooling": "bazel"
+          }
+        },
+        {
+          "id": "make",
+          "traits": {
+            "preferences.tooling": "make"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "make"
+      },
+      "observed_choice": "make"
+    },
+    {
+      "case_id": "forget-a-dimension-returns-it-to-neutral",
+      "task_type": "selective_forget",
+      "note": "A strong belief that was forgotten must lose to a weak belief that was not. If the tombstone were ignored, 'forgotten' would win.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed"
+          },
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "minimal",
+            "source_type": "single_behavioral"
+          },
+          {
+            "op": "forget",
+            "dimension": "interaction_profile.preferred_verbosity"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "forgotten",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "remembered",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "minimal"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "remembered"
+      },
+      "observed_choice": "remembered"
+    },
+    {
+      "case_id": "forget-then-new-evidence-establishes-the-new-answer",
+      "task_type": "selective_forget",
+      "note": "Forgetting is a correction, not a permanent hole: evidence supplied afterwards is unaffected.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed"
+          },
+          {
+            "op": "forget",
+            "dimension": "interaction_profile.preferred_verbosity"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "forget-a-project-drops-only-that-project",
+      "task_type": "selective_forget",
+      "note": "A project tombstone must not take unrelated global beliefs with it.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "scope": "project",
+            "scope_key": "alpha"
+          },
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "minimal"
+          },
+          {
+            "op": "forget",
+            "project_id": "alpha"
+          }
+        ],
+        "context": {
+          "project_id": "alpha"
+        }
+      },
+      "candidate_outputs": [
+        {
+          "id": "kept",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "minimal"
+          }
+        },
+        {
+          "id": "dropped",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "kept"
+      },
+      "observed_choice": "kept"
+    },
+    {
+      "case_id": "reject-sticks-against-the-same-weak-signal",
+      "task_type": "selective_forget",
+      "note": "'That is not true about me' is not undone by the weak signal that produced it in the first place.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "reject",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "detailed",
+            "provenance": "agent_inference",
+            "source_type": "agent_inference"
+          },
+          {
+            "op": "observe",
+            "dimension": "creative_profile.simplicity_vs_richness",
+            "value": "minimal",
+            "source_type": "single_behavioral"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "rejected",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        },
+        {
+          "id": "allowed",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "minimal"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "allowed"
+      },
+      "observed_choice": "allowed"
+    },
+    {
+      "case_id": "transfer-global-preference-reaches-an-unseen-domain",
+      "task_type": "cross_domain_transfer",
+      "note": "Learned in A, B and C; asked about D, with no D-specific evidence.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse",
+            "domain": "software",
+            "session_id": "s1"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse",
+            "domain": "writing",
+            "session_id": "s2"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse",
+            "domain": "finance",
+            "session_id": "s3"
+          }
+        ],
+        "context": {
+          "domain": "cooking"
+        }
+      },
+      "candidate_outputs": [
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        },
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "transfer-does-not-invent-an-unrelated-dimension",
+      "task_type": "cross_domain_transfer",
+      "note": "Knowing someone's verbosity is not knowing their taste for detail. Scored on how far the distribution departs from uniform, because the correct answer to 'no evidence' is 'no idea', not a coin flip dressed as a prediction.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse",
+            "domain": "software",
+            "session_id": "s1"
+          },
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse",
+            "domain": "writing",
+            "session_id": "s2"
+          }
+        ],
+        "context": {
+          "domain": "cooking"
+        }
+      },
+      "candidate_outputs": [
+        {
+          "id": "feature_rich",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "feature_rich"
+          }
+        },
+        {
+          "id": "minimal",
+          "traits": {
+            "creative_profile.simplicity_vs_richness": "minimal"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "minimal",
+        "expected_uniform": true
+      },
+      "observed_choice": "minimal"
+    },
+    {
+      "case_id": "calibration-no-evidence-is-not-a-confident-answer",
+      "task_type": "preference_prediction",
+      "note": "With nothing known the distribution must be uniform, so the log loss on this case is exactly ln 2. Anything sharper is overconfidence.",
+      "exposed_to_liwm": {
+        "setup": [],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        },
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse",
+        "expected_uniform": true
+      },
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "calibration-one-statement-beats-nothing-but-is-not-certainty",
+      "task_type": "preference_prediction",
+      "note": "A single explicit statement is strong and still not conclusive.",
+      "exposed_to_liwm": {
+        "setup": [
+          {
+            "op": "observe",
+            "dimension": "interaction_profile.preferred_verbosity",
+            "value": "terse"
+          }
+        ],
+        "context": {}
+      },
+      "candidate_outputs": [
+        {
+          "id": "terse",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "terse"
+          }
+        },
+        {
+          "id": "detailed",
+          "traits": {
+            "interaction_profile.preferred_verbosity": "detailed"
+          }
+        }
+      ],
+      "hidden_ground_truth": {
+        "preferred_candidate": "terse"
+      },
+      "observed_choice": "terse"
+    }
+  ]
+}
