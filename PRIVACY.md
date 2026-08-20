@@ -2,10 +2,10 @@
 
 ## Defaults
 
-- All profile learning is local.
+- LIWM core stores and computes profile state locally.
 - Telemetry is absent and fixed to `disabled` in configuration.
 - No hosted database, account, or proprietary backend is required.
-- Nothing is exported unless the user explicitly requests a local export.
+- LIWM performs no automatic upload. Export requires an explicit local command.
 - Actual profiles are excluded by `.gitignore` and initialization inside Git is
   refused by default.
 
@@ -15,9 +15,17 @@ LIWM stores intelligible summaries: evidence provenance, scoped preference or
 intent values, confidence, decisions, assumptions, predicted outcomes, feedback,
 and aggregate metrics. It does not store model hidden reasoning.
 
-Free text may be disabled in configuration. Anonymized research export strips
-profile IDs, event IDs, paths, quotes, notes, and other free text. It is still a
-manual export and should be reviewed before sharing.
+With free-text storage disabled, LIWM drops incidental prose fields such as
+quotes and notes. Structured semantic strings, including belief values, may
+still be stored because they are the model's content. Anonymised export is an
+allowlisted, minimized view, not a promise of anonymity: distinctive event or
+metric patterns may still permit linkage. Review every export before sharing.
+
+When LIWM is integrated into a hosted agent, the selected runtime projection may
+be included in that agent's model context and handled under the host/provider's
+privacy policy. “Local-first” describes LIWM core storage and I/O; it does not
+override the host's data path. Processes running with the same filesystem
+authority can also read the raw LIWM files.
 
 ## What LIWM refuses
 
@@ -34,6 +42,7 @@ that task according to host policy; durable learning remains refused by default.
 - selectively forget: `liwm forget`
 - delete project: `liwm project delete`
 - export: `liwm export` or `liwm export --anonymise`
+- opt-in study view: `liwm study on`, `liwm study export --anonymise`, `liwm study off`
 - rebuild/recover: `liwm rebuild`, `liwm verify`
 - rollback: `liwm rollback --as-of <timestamp> --yes`
 - backup management: `liwm backup create`, `liwm backup list`
@@ -51,6 +60,12 @@ to a bounded count. Event history remains until explicit hard deletion because
 it provides audit and reconstruction. Forgetting adds a tombstone: it removes
 active influence without falsifying history. Fresh direct evidence after that
 tombstone may establish a new belief; old pre-tombstone evidence stays inactive.
+
+Study mode is off by default and derives a minimized view from this same event
+log; it creates no second telemetry store. Its retention window controls what a
+study export includes, not deletion from the source event history. LIWM never
+uploads study exports. Anonymisation pseudonymizes identifiers and coarsens time,
+but remains risk reduction rather than an unlinkability guarantee.
 
 ## Encryption
 

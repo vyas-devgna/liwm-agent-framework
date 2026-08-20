@@ -3,7 +3,7 @@ name: liwm-learning
 description: How evidence becomes belief in LIWM - source weights, provenance trust, confidence, decay, scope promotion. Consult when deciding how to record something or why a confidence looks the way it does.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   framework: liwm
 ---
 

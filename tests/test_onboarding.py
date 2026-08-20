@@ -132,13 +132,25 @@ class TestOnboarding(LiwmTestCase):
                            self.confidence("creative_profile.novelty_seeking", "novel"))
 
     def test_onboarding_never_stores_a_sensitive_attribute(self):
-        def answer(q):
-            return [{"dimension": "religion", "value": "something"}]
+        session = OnboardingSession(self.store, session_id="onb")
+        session.start()
+        q = session.next_question()
+        with self.assertRaises(ValueError):
+            session.record_answer(q["id"], "x", observations=[
+                {"dimension": "religion", "value": "something"}
+            ])
+        self.assertFalse([b for b in self.store.load()["beliefs"]
+                          if "religion" in b["dimension"]])
 
-        self._run(answer_fn=answer)
-        profile = self.store.load()
-        self.assertFalse([b for b in profile["beliefs"] if "religion" in b["dimension"]])
-        self.assertGreater(profile["privacy"]["refusals_recorded"], 0)
+    def test_answer_must_match_an_asked_unanswered_question(self):
+        session = OnboardingSession(self.store, session_id="onb")
+        session.start()
+        with self.assertRaises(ValueError):
+            session.record_answer("does-not-exist", "x")
+        q = session.next_question()
+        session.record_answer(q["id"], "x")
+        with self.assertRaises(ValueError):
+            session.record_answer(q["id"], "again")
 
 
 

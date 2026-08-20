@@ -17,11 +17,15 @@ inference does not become a statement because it turned out to be right.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from pathlib import Path
 
-from .jsonio import FileLock, backup_file, read_json_resilient, utc_now, write_json_atomic
+from .jsonio import (
+    FileLock, backup_file, lifecycle_lock_path, read_json_resilient, utc_now,
+    write_json_atomic,
+)
 
 __all__ = [
     "ORIGINS",
@@ -29,9 +33,10 @@ __all__ = [
     "ProjectStore",
     "empty_intent",
     "slugify_project",
+    "validate_project_id",
 ]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 ORIGINS = ("USER_SAID", "AGENT_INFERRED", "AGENT_DERIVED")
 
@@ -61,9 +66,22 @@ def slugify_project(name_or_path):
     raw = str(name_or_path or "").strip()
     if not raw:
         return "project"
-    base = Path(raw).name if ("/" in raw or "\\" in raw) else raw
+    is_path = "/" in raw or "\\" in raw
+    base = Path(raw).name if is_path else raw
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", base).strip("-._").lower()
-    return slug or "project"
+    slug = slug or "project"
+    if is_path:
+        normalised = str(Path(raw).expanduser().absolute()).casefold()
+        slug += "-" + hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:8]
+    return slug
+
+
+def validate_project_id(project_id):
+    value = str(project_id or "")
+    if not value or value in {".", ".."} or not re.fullmatch(
+            r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}", value):
+        raise ValueError("project_id must be a safe identifier, not a path")
+    return value
 
 
 def empty_intent(project_id, name=None, domain=None):
@@ -90,8 +108,11 @@ def empty_intent(project_id, name=None, domain=None):
 
 
 def _item(text, origin, **kwargs):
+    from .privacy import screen_observation
+
     if origin not in ORIGINS:
         raise ValueError("origin must be one of %s, got %r" % (", ".join(ORIGINS), origin))
+    screen_observation(text=text, strict=True)
     confidence = kwargs.pop("confidence", None)
     if confidence is None:
         # A statement is taken at face value; an inference starts as a guess.
@@ -100,6 +121,11 @@ def _item(text, origin, **kwargs):
         "id": "itm_%s" % uuid.uuid4().hex[:12],
         "text": text,
         "origin": origin,
+        "provenance": kwargs.pop("provenance", {
+            "USER_SAID": "direct_user_message",
+            "AGENT_INFERRED": "agent_inference",
+            "AGENT_DERIVED": "tool_output",
+        }[origin]),
         "confidence": float(confidence),
         "status": kwargs.pop("status", "active"),
         "created_at": utc_now(),
@@ -117,8 +143,13 @@ class ProjectStore:
 
     def __init__(self, home, project_id):
         self.home = Path(home)
-        self.project_id = project_id
-        self.dir = self.home / "projects" / project_id
+        self.project_id = validate_project_id(project_id)
+        root = (self.home / "projects").resolve()
+        self.dir = root / self.project_id
+        try:
+            self.dir.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError("project directory escapes LIWM home") from exc
         self.intent_path = self.dir / "intent.json"
         self.decisions_path = self.dir / "decisions.json"
         self.feedback_path = self.dir / "feedback.json"
@@ -136,49 +167,67 @@ class ProjectStore:
         return data
 
     def save_intent(self, doc):
-        with FileLock(self.lock_path):
-            backup_file(self.intent_path, self.backups, tag="intent")
-            doc = dict(doc)
-            doc["revision"] = int(doc.get("revision", 0)) + 1
-            doc["updated_at"] = utc_now()
-            doc["confidence"] = _intent_confidence(doc)
-            doc["contradictions"] = detect_intent_contradictions(doc)
-            write_json_atomic(self.intent_path, doc)
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                return self._save_intent_locked(doc)
+
+    def _save_intent_locked(self, doc):
+        backup_file(self.intent_path, self.backups, tag="intent")
+        doc = dict(doc)
+        doc["revision"] = int(doc.get("revision", 0)) + 1
+        doc["updated_at"] = utc_now()
+        doc["confidence"] = _intent_confidence(doc)
+        doc["contradictions"] = detect_intent_contradictions(doc)
+        write_json_atomic(self.intent_path, doc)
         return doc
 
     def add(self, section, text, origin, **kwargs):
         """Append an item to an intent section."""
         if section not in INTENT_SECTIONS:
             raise ValueError("unknown intent section %r" % section)
-        doc = self.load_intent()
-        item = _item(text, origin, **kwargs)
-        doc[section].append(item)
-        self.save_intent(doc)
-        return item
+        provenance = kwargs.get("provenance", {
+            "USER_SAID": "direct_user_message",
+            "AGENT_INFERRED": "agent_inference",
+            "AGENT_DERIVED": "tool_output",
+        }.get(origin))
+        from .evidence import PROVENANCE_TRUST
+        if PROVENANCE_TRUST.get(provenance, 0.0) <= 0.0:
+            raise ValueError("untrusted provenance cannot enter active project intent")
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                doc = self.load_intent()
+                item = _item(text, origin, **kwargs)
+                doc[section].append(item)
+                self._save_intent_locked(doc)
+                return item
 
     def supersede(self, item_id, reason=None, replacement_id=None):
         """Mark an intent item superseded - never delete, so history survives."""
-        doc = self.load_intent()
-        found = None
-        for section in INTENT_SECTIONS:
-            for item in doc[section]:
-                if item["id"] == item_id:
-                    item["status"] = "superseded"
-                    item["superseded_at"] = utc_now()
-                    item["superseded_reason"] = reason
-                    item["superseded_by"] = replacement_id
-                    item["updated_at"] = utc_now()
-                    found = item
-        if found:
-            self.save_intent(doc)
-        return found
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                doc = self.load_intent()
+                found = None
+                for section in INTENT_SECTIONS:
+                    for item in doc[section]:
+                        if item["id"] == item_id:
+                            item["status"] = "superseded"
+                            item["superseded_at"] = utc_now()
+                            item["superseded_reason"] = reason
+                            item["superseded_by"] = replacement_id
+                            item["updated_at"] = utc_now()
+                            found = item
+                if found:
+                    self._save_intent_locked(doc)
+                return found
 
     def set_stage(self, stage):
         if stage not in _STAGES:
             raise ValueError("unknown stage %r (expected one of %s)" % (stage, ", ".join(_STAGES)))
-        doc = self.load_intent()
-        doc["stage"] = stage
-        return self.save_intent(doc)
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                doc = self.load_intent()
+                doc["stage"] = stage
+                return self._save_intent_locked(doc)
 
     def active_items(self, section):
         return [i for i in self.load_intent().get(section, []) if i.get("status") == "active"]
@@ -199,7 +248,8 @@ class ProjectStore:
         is what makes "why did you do this?" answerable from records rather than
         from a plausible-sounding reconstruction after the fact.
         """
-        doc = self.load_decisions()
+        from .privacy import screen_observation
+        screen_observation(value=[summary, rationale, alternatives, artifact, assumptions], strict=True)
         entry = {
             "id": "dec_%s" % uuid.uuid4().hex[:12],
             "at": utc_now(),
@@ -214,23 +264,28 @@ class ProjectStore:
             "outcome": None,
             "feedback_refs": [],
         }
-        doc["decisions"].append(entry)
-        with FileLock(self.lock_path):
-            backup_file(self.decisions_path, self.backups, tag="decisions")
-            write_json_atomic(self.decisions_path, doc)
-        return entry
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                doc = self.load_decisions()
+                doc["decisions"].append(entry)
+                backup_file(self.decisions_path, self.backups, tag="decisions")
+                write_json_atomic(self.decisions_path, doc)
+                return entry
 
     def attach_outcome(self, decision_id, outcome, feedback_ref=None):
-        doc = self.load_decisions()
-        for entry in doc["decisions"]:
-            if entry["id"] == decision_id:
-                entry["outcome"] = outcome
-                entry["outcome_at"] = utc_now()
-                if feedback_ref:
-                    entry["feedback_refs"].append(feedback_ref)
-        with FileLock(self.lock_path):
-            write_json_atomic(self.decisions_path, doc)
-        return doc
+        from .privacy import screen_observation
+        screen_observation(value=outcome, strict=True)
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                doc = self.load_decisions()
+                for entry in doc["decisions"]:
+                    if entry["id"] == decision_id:
+                        entry["outcome"] = outcome
+                        entry["outcome_at"] = utc_now()
+                        if feedback_ref:
+                            entry["feedback_refs"].append(feedback_ref)
+                write_json_atomic(self.decisions_path, doc)
+                return doc
 
     # -- feedback ----------------------------------------------------------
     def load_feedback(self):
@@ -241,12 +296,15 @@ class ProjectStore:
                         "feedback": []}
 
     def record_feedback(self, record):
-        doc = self.load_feedback()
-        doc["feedback"].append(record)
-        with FileLock(self.lock_path):
-            backup_file(self.feedback_path, self.backups, tag="feedback")
-            write_json_atomic(self.feedback_path, doc)
-        return record
+        from .privacy import screen_observation
+        screen_observation(value=record, strict=True)
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                doc = self.load_feedback()
+                doc["feedback"].append(record)
+                backup_file(self.feedback_path, self.backups, tag="feedback")
+                write_json_atomic(self.feedback_path, doc)
+                return record
 
     # -- lifecycle ---------------------------------------------------------
     def exists(self):
@@ -259,15 +317,17 @@ class ProjectStore:
         tombstone so the personal profile stops counting it, while the audit
         trail of what happened remains intact.
         """
-        removed = []
-        for path in (self.intent_path, self.decisions_path, self.feedback_path):
-            if path.is_file():
-                backup_file(path, self.backups, tag="project-delete")
-                path.unlink()
-                removed.append(str(path))
-        if self.dir.is_dir() and not any(self.dir.iterdir()):
-            self.dir.rmdir()
-        return removed
+        with FileLock(lifecycle_lock_path(self.home)):
+            with FileLock(self.lock_path):
+                removed = []
+                for path in (self.intent_path, self.decisions_path, self.feedback_path):
+                    if path.is_file():
+                        backup_file(path, self.backups, tag="project-delete")
+                        path.unlink()
+                        removed.append(str(path))
+                if self.dir.is_dir() and not any(self.dir.iterdir()):
+                    self.dir.rmdir()
+                return removed
 
     def summary(self):
         doc = self.load_intent()

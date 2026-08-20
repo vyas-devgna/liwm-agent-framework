@@ -6,10 +6,9 @@ no daemon.
 
 ## Why this shape
 
-Claude Code hooks (`SessionStart`, `UserPromptSubmit`) **cannot inject text into
-the model's context** — `systemMessage` is informational output shown to the
-user, not added to the prompt. The two mechanisms that genuinely reach the model
-every session are:
+Claude Code currently permits `SessionStart` and `UserPromptSubmit` hooks to add
+context. LIWM chooses not to require that host-specific mechanism. Its portable
+baseline uses:
 
 1. `~/.claude/CLAUDE.md` — always loaded;
 2. skill `name` + `description` — always loaded; the body loads on invocation.
@@ -44,8 +43,8 @@ the framework never touches the context window until it is needed.
 ~/.liwm/                   # private data — never in a repository
 ```
 
-Skills may be **symlinks** to a single checkout (preferred on macOS/Linux, so
-`liwm update` is a `git pull`) or **copies** (Windows without Developer Mode).
+Skills may be **symlinks** to a single checkout or **copies** (Windows without
+Developer Mode).
 The installer decides and records which in `~/.liwm/config.json`.
 
 ## The bootstrap block
@@ -76,7 +75,8 @@ ls ~/.claude/skills  # should list liwm and liwm-*
 
 In a fresh Claude Code session, `/liwm` should be available, and asking
 "what does LIWM know about me?" should trigger the router without an explicit
-invocation.
+invocation. Treat these as acceptance checks, not established behavior; record
+results using [`docs/HOST_ACCEPTANCE.md`](../../docs/HOST_ACCEPTANCE.md).
 
 ## Sources
 
@@ -84,4 +84,4 @@ invocation.
 - Memory / CLAUDE.md precedence and `@` imports: https://code.claude.com/docs/en/memory.md
 - Settings and `CLAUDE_CONFIG_DIR`: https://code.claude.com/docs/en/settings.md
 - Plugins: https://code.claude.com/docs/en/plugins-reference.md
-- Hooks (and why they are not used here): https://code.claude.com/docs/en/hooks.md
+- Hooks: https://code.claude.com/docs/en/hooks

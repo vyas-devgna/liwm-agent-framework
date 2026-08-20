@@ -22,6 +22,16 @@ contamination, destructive prompt installation/uninstallation, unsafe path
 handling, concurrency data loss, integrity/recovery defects, export leakage,
 and candidate-rule bypasses are security-relevant.
 
+## Security boundary
+
+Normal LIWM mutations are mediated through guarded framework APIs and the CLI,
+which enforce provenance, privacy, audit and atomicity. LIWM is not an OS
+security boundary and cannot protect against a process with equivalent
+filesystem authority deliberately rewriting the framework, events or host
+configuration. Event hashes are tamper-evident for accidental or isolated
+changes; they are not cryptographically authoritative against an account-level
+attacker.
+
 ## Safe testing
 
 Use a temporary `LIWM_HOME` and synthetic data. Do not test against another

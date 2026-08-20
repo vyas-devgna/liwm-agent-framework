@@ -72,6 +72,7 @@ def _host(**kwargs):
         "vendor": None,
         # Environment variable that relocates the host's config directory.
         "home_env": None,
+        "home_env_suffix": None,
         # Config directory, as a "~"-relative template.
         "config_dir": None,
         # The user-level instruction file: the one LIWM installs into, because
@@ -126,15 +127,12 @@ BUILTIN_HOSTS = (
             "skills": True,
             "plugins": True,
             "subagents": True,
-            # Checked and false, not merely unlisted: hooks fire, but
-            # SessionStart output is shown to the user rather than added to the
-            # model's prompt, so LIWM cannot depend on it for context.
-            "hook_injects_context": False,
+            "hook_injects_context": True,
             "progressive_disclosure": True,
         },
-        docs="https://docs.claude.com/en/docs/claude-code/skills",
+        docs="https://code.claude.com/docs/en/skills",
         notes=(
-            "Full LIWM: a ~40-line router block in CLAUDE.md plus 15 skills under "
+            "Documented LIWM adapter: a compact router block in CLAUDE.md plus 15 skills under "
             "~/.claude/skills/. Skill bodies are loaded on demand, so the always-on "
             "cost stays small."
         ),
@@ -155,19 +153,19 @@ BUILTIN_HOSTS = (
             "hook_injects_context": True,
             "progressive_disclosure": True,
         },
-        docs="https://developers.openai.com/codex/local-config",
+        docs="https://learn.chatgpt.com/docs/agent-configuration/agents-md",
         notes=(
             "AGENTS.md is truncated at project_doc_max_bytes (32 KiB by default), "
-            "which the LIWM block stays far inside. A SessionStart hook can inject "
-            "additionalContext, but it requires the user to trust hooks, so it is "
-            "offered and never assumed."
+            "which the LIWM block stays far inside. Hooks can inject additional "
+            "context after user review/trust, so they are optional and never assumed."
         ),
     ),
     _host(
         id="gemini-cli",
         name="Gemini CLI",
         vendor="Google",
-        home_env="GEMINI_CONFIG_DIR",
+        home_env="GEMINI_CLI_HOME",
+        home_env_suffix=".gemini",
         config_dir="~/.gemini",
         instruction_rel="GEMINI.md",
         project_instruction_files=("GEMINI.md", "AGENTS.md"),
@@ -286,7 +284,9 @@ def config_dir_for(spec):
     if env_name:
         raw = (os.environ.get(env_name) or "").strip()
         if raw:
-            return Path(raw).expanduser().absolute()
+            base = Path(raw).expanduser().absolute()
+            suffix = spec.get("home_env_suffix")
+            return base / suffix if suffix else base
     template = spec.get("config_dir")
     if template is None:
         return None
@@ -324,6 +324,13 @@ def instruction_file_for(spec):
     if rel:
         base = config_dir_for(spec)
         if base is not None:
+            if spec.get("id") == "codex" and str(rel) == "AGENTS.md":
+                override = base / "AGENTS.override.md"
+                try:
+                    if override.is_file() and override.stat().st_size:
+                        return override
+                except OSError:  # pragma: no cover - filesystem race
+                    pass
             return base.joinpath(*str(rel).replace("\\", "/").split("/"))
     template = spec.get("global_instruction_file")
     if template is None:
@@ -460,7 +467,12 @@ def check_budget(spec, block_text, existing_text=""):
     budget = spec.get("instruction_budget_bytes")
     block_bytes = len(block_text.encode("utf-8"))
     existing_bytes = len((existing_text or "").encode("utf-8"))
-    total = block_bytes + existing_bytes + 1
+    if "<!-- LIWM:BEGIN" in (existing_text or "") and "<!-- LIWM:BEGIN" in block_text:
+        from .integration import upsert_bootstrap
+
+        total = len(upsert_bootstrap(existing_text, block_text).encode("utf-8"))
+    else:
+        total = block_bytes + existing_bytes + 1
     return {
         "budget_bytes": budget,
         "block_bytes": block_bytes,

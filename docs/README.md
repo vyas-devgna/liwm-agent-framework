@@ -32,7 +32,7 @@
 
 | | |
 |---|---|
-| **[Privacy](../PRIVACY.md)** | What is stored, what is refused, what never leaves the machine |
+| **[Privacy](../PRIVACY.md)** | What is stored, refused, exported, or exposed through a host |
 | **[Threat model](../THREAT_MODEL.md)** | Attacker capabilities, mitigations, mapping to OWASP ASI06, and the residual risks |
 | **[Security policy](../SECURITY.md)** | How to report something |
 | **[Encryption design](ENCRYPTION.md)** | Designed, not shipped. Read this before assuming otherwise |
@@ -43,6 +43,8 @@
 |---|---|
 | **[Host adapters](../adapters/README.md)** | Every supported agent, and how to add one in eight lines of JSON |
 | **[Research protocol](RESEARCH.md)** | The study that would actually establish whether this works |
+| **[Host acceptance](HOST_ACCEPTANCE.md)** | Evidence required before claiming an adapter works on a host |
+| **[IntentBench](../benchmarks/intentbench/README.md)** | Leakage boundary, cases, labels, and benchmark conditions |
 | **[Roadmap](../ROADMAP.md)** | Where it is going, and what is deliberately not in 0.1.0 |
 | **[Contributing](../CONTRIBUTING.md)** | How to help |
 | **[Brand assets](../assets/README.md)** | The elephant, and the rules it lives by |

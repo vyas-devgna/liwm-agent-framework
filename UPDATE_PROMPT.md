@@ -14,24 +14,24 @@ script. Preserve all private profile data and unrelated host configuration.
    the current official/local host conventions. Verify the repository identity
    before fetching. Stop rather than replacing an unrelated checkout.
 
-2. Before changing anything, make timestamped backups of config.json, user.json,
-   metrics.json, learning state, project state, the global instruction file, and
-   any copied LIWM skill directories. Never back up or copy unrelated skills.
+2. Before changing private state, make timestamped backups of config.json,
+   user.json, metrics.json, learning state, and project state. Host instruction
+   and LIWM skill backups are created by the lifecycle apply command below.
 
 3. Fetch the remote and fast-forward to the requested/latest stable release. Do
    not discard local modifications: if the checkout is dirty or cannot
    fast-forward, stop and report the exact conflict. Update the private virtual
    environment's editable package without installing optional dependencies.
 
-4. Run the new CLI's migration dry checks, then `liwm migrate`, `liwm rebuild`,
+4. Run `liwm migrate`, `liwm rebuild`,
    and `liwm verify`. Migrations must be forward-only, schema-validated, atomic,
    and recoverable from the backups. Do not delete historical events.
 
-5. Refresh only LIWM-managed skill links/copies from `skills/liwm*`. Leave every
-   unrelated skill untouched. Read the current matching adapter bootstrap,
-   substitute the absolute CLI command, and replace exactly the complete
-   `<!-- LIWM:BEGIN ... -->` through `<!-- LIWM:END -->` block. If markers are
-   malformed, stop. Never alter text outside the block or create a duplicate.
+5. Read the current matching adapter bootstrap and substitute the absolute CLI
+   command. Create and inspect `liwm install plan --host <id> --block <path>
+   --output <plan.json>`, then run `liwm install apply --plan <plan.json>` and
+   `liwm install verify --plan <plan.json>`. This refreshes only planned LIWM
+   files, refuses malformed markers or hash drift, and preserves unrelated text.
 
 6. Update only LIWM-owned installation fields in config.json while preserving
    unknown/user fields. Run `liwm doctor --json`, schema validation, the full

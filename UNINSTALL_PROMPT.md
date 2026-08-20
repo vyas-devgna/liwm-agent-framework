@@ -14,17 +14,16 @@ with private-data deletion without my explicit answer in this conversation.
 
 After I answer:
 
-1. Make timestamped backups of every configuration file you will edit. In the
-   active Claude Code CLAUDE.md, Codex AGENTS.md/AGENTS.override.md, or generic
-   host instruction file, remove exactly one complete block beginning with
-   `<!-- LIWM:BEGIN` and ending with `<!-- LIWM:END -->`. If the markers are
-   absent, leave the file untouched. If malformed, stop and report it. Preserve
-   every byte outside the block; do not delete an otherwise empty instruction
-   file unless it was created by LIWM and config.json records that fact.
+1. Run `liwm uninstall plan --host <id> --output <plan.json>` and show me every
+   target, precondition, backup source, and expected result. After approval, run
+   `liwm uninstall apply --plan <plan.json>` and `liwm uninstall verify --plan
+   <plan.json>`. The CLI removes exactly one complete LIWM block, restores
+   overwritten LIWM skill files, refuses malformed markers or changed hashes,
+   and preserves every byte of unrelated instruction text.
 
-2. Remove only LIWM-managed `liwm` and `liwm-*` skill links/directories whose
-   recorded source or manifest identifies this framework. Never remove another
-   skill merely because its name contains `liwm`. Remove optional installed LIWM
+2. The serialized receipt, not a name pattern, identifies LIWM-managed skill
+   files. Never remove another skill merely because its name contains `liwm`.
+   Remove optional installed LIWM
    plugin entries only if config.json records that LIWM installed them. Leave
    unrelated plugins, marketplaces, settings, and persona instructions intact.
 

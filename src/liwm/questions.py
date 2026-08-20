@@ -156,11 +156,14 @@ def _why(contributions, question):
 class QuestionPlanner:
     """Selects which questions to ask, in what order, under a mode contract."""
 
-    def __init__(self, mode_contract, resolved=None, strategy=None, bank=None):
+    def __init__(self, mode_contract, resolved=None, strategy=None, bank=None,
+                 outcome_store=None, domain=None):
         self.contract = dict(mode_contract)
         self.resolved = resolved or {}
         self.strategy = strategy or {}
         self.bank = list(bank if bank is not None else QUESTION_BANK)
+        self.outcome_store = outcome_store
+        self.domain = domain
 
     # -- helpers -----------------------------------------------------------
     def _style_weights(self):
@@ -225,6 +228,15 @@ class QuestionPlanner:
                     style_weights=style_weights,
                 )
                 if s is not None:
+                    if self.outcome_store is not None:
+                        estimates = [self.outcome_store.effectiveness(
+                            q["family"], dimension=dimension, domain=self.domain
+                        ) for dimension in q["resolves"]]
+                        empirical = [row for row in estimates if row["empirical"]]
+                        if empirical:
+                            factor = 0.5 + sum(row["estimate"] for row in empirical) / len(empirical)
+                            s["utility"] = round(s["utility"] * factor, 4)
+                            s["empirical_effectiveness"] = empirical
                     scored.append(s)
             if not scored:
                 break

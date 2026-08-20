@@ -11,7 +11,7 @@ chain of thought, or host-specific profile format is required.
 
 | Layer | Responsibility | Principal modules |
 |---|---|---|
-| Invariants | Unmodifiable agency/privacy/integrity rules | `constitution.py`, `privacy.py` |
+| Invariants | Guarded agency/privacy/integrity rules | `constitution.py`, `privacy.py` |
 | Evidence | Provenance trust, source ceilings, decay, combination | `events.py`, `evidence.py` |
 | State | Fold events into profile and project views | `profile.py`, `projects.py`, `scope.py` |
 | Adaptation | Context, modes, fatigue, active question selection | `context.py`, `modes.py`, `questions.py` |
@@ -65,7 +65,7 @@ not confidence in a personality diagnosis.
 
 ## Question utility
 
-The planner implements a calibrated heuristic corresponding to:
+The planner implements a provisional, interpretable heuristic corresponding to:
 
 ```text
 information gain × decision impact × misunderstanding risk × relevance
@@ -97,8 +97,9 @@ Promoted rules remain data, not rewritten source prompts, and are revertible.
 
 Interfaces deliberately permit future retrieval backends, local embeddings,
 Bayesian preference inference, ranking models, multimodal evidence, shared/team
-models, external evaluators, and fine-tuning exports. Extensions must preserve
-the event/provenance/scope contract and cannot bypass the constitution.
+models, external evaluators, and fine-tuning exports. Compliant extensions must
+preserve the event/provenance/scope contract. LIWM cannot stop code with the
+same filesystem authority from replacing the extension or the constitution.
 
 ## Host independence
 

@@ -56,6 +56,7 @@ SENSITIVE_CATEGORIES = {
     ],
     "religion": [
         r"\b(?:i am|i'm|user is)\s+(?:a\s+)?(?:muslim|christian|jewish|hindu|buddhist|sikh|atheist|agnostic|catholic|protestant|mormon)\b",
+        r"\b(?:i|user)\s+(?:practice[sd]?|follow(?:s|ed)?|converted to)\s+(?:islam|christianity|judaism|hinduism|buddhism|sikhism)\b",
         r"\b(?:religion|faith|religious belief)\s*(?:is|:)\s*\w+",
     ],
     "sexual_orientation": [

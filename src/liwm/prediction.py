@@ -12,11 +12,25 @@ is to state the assumption (constitution C07) rather than to display a number.
 from __future__ import annotations
 
 import uuid
+import math
 
 from .evidence import clamp
 from .jsonio import utc_now
 
-__all__ = ["make_prediction", "record_prediction", "resolve_prediction", "brier", "calibration_bins"]
+__all__ = [
+    "make_prediction", "make_preference_prediction", "record_prediction",
+    "resolve_prediction", "brier", "log_loss", "calibration_bins",
+]
+
+
+def _unit_interval(value, name):
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("%s must be a number from 0 to 1" % name) from exc
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise ValueError("%s must be finite and between 0 and 1" % name)
+    return number
 
 
 def make_prediction(
@@ -27,18 +41,22 @@ def make_prediction(
     intent_assumptions=None,
     basis=None,
     artifact=None,
+    candidate_id=None,
 ):
     """Build a structured prediction about how an artifact will land."""
     return {
         "id": "prd_%s" % uuid.uuid4().hex[:12],
         "at": utc_now(),
         "artifact": artifact,
-        "predicted_acceptance": clamp(predicted_acceptance),
-        "confidence": clamp(confidence),
+        "candidate_id": candidate_id,
+        "target_type": "binary_first_pass_acceptance",
+        "predicted_acceptance": _unit_interval(predicted_acceptance, "predicted_acceptance"),
+        "confidence": _unit_interval(confidence, "confidence"),
+        "probability_status": "uncalibrated" if not basis else "locally_calibrated_candidate",
         "predicted_friction": [
             {
                 "issue": f.get("issue"),
-                "probability": clamp(f.get("probability", 0.3)),
+                "probability": _unit_interval(f.get("probability", 0.3), "friction probability"),
                 "dimension": f.get("dimension"),
             }
             for f in (predicted_friction or [])
@@ -55,6 +73,22 @@ def make_prediction(
     }
 
 
+def make_preference_prediction(options, confidence, **kwargs):
+    """Commit to an A/B/C preference distribution before observing the choice."""
+    probabilities = {str(label): _unit_interval(value, "option probability")
+                     for label, value in dict(options or {}).items()}
+    if len(probabilities) < 2 or abs(sum(probabilities.values()) - 1.0) > 1e-6:
+        raise ValueError("preference prediction needs at least two probabilities summing to 1")
+    prediction = make_prediction(0.5, confidence, **kwargs)
+    prediction.update({
+        "target_type": "categorical_preference",
+        "option_probabilities": probabilities,
+        "predicted_option": max(probabilities, key=probabilities.get),
+        "predicted_acceptance": None,
+    })
+    return prediction
+
+
 def record_prediction(store, prediction, session_id=None, project_id=None, domain=None):
     store.events.record(
         "prediction", "agent_inference",
@@ -64,8 +98,10 @@ def record_prediction(store, prediction, session_id=None, project_id=None, domai
     return prediction
 
 
-def resolve_prediction(store, prediction_id, actual_acceptance, observed_friction=None,
-                       session_id=None, project_id=None, domain=None):
+def resolve_prediction(store, prediction_id, actual_acceptance=None, observed_friction=None,
+                       session_id=None, project_id=None, domain=None,
+                       evaluator_type="agent_recorded", actual_option=None,
+                       evidence_event_id=None):
     """Score a prediction against what actually happened.
 
     The resulting event is what ``liwm stats`` uses for calibration, and what
@@ -73,48 +109,115 @@ def resolve_prediction(store, prediction_id, actual_acceptance, observed_frictio
     mix is working.
     """
     prediction = None
+    prediction_event = None
     for event in store.events.iter_events(kinds={"prediction"}):
         if (event.get("payload") or {}).get("id") == prediction_id:
             prediction = event["payload"]
+            prediction_event = event
     if prediction is None:
         raise KeyError("no prediction %r in the event log" % prediction_id)
+    for event in store.events.iter_events(kinds={"outcome"}):
+        if (event.get("payload") or {}).get("prediction_id") == prediction_id:
+            raise ValueError("prediction %r is already resolved" % prediction_id)
+
+    evaluator_types = {
+        "agent_recorded",
+        "synthetic_replay", "historical_counterfactual_estimate",
+        "observed_human_outcome", "external_evaluator", "benchmark_ground_truth",
+    }
+    if evaluator_type not in evaluator_types:
+        raise ValueError("unknown evaluator type %r" % evaluator_type)
+    evidence_event = None
+    if evaluator_type == "observed_human_outcome":
+        evidence_event = next(
+            (event for event in store.events.iter_events(include_quarantined=True)
+             if event.get("event_id") == evidence_event_id), None
+        )
+        if (evidence_event is None or evidence_event.get("quarantined")
+                or evidence_event.get("provenance") not in {
+                    "direct_user_message", "direct_user_edit", "explicit_user_review"
+                }
+                or int(evidence_event.get("sequence") or 0)
+                <= int(prediction_event.get("sequence") or 0)):
+            raise ValueError(
+                "observed_human_outcome requires a later trusted user evidence event"
+            )
 
     observed = set(observed_friction or [])
     predicted = {f["issue"] for f in prediction.get("predicted_friction", []) if f.get("issue")}
-    actual = clamp(actual_acceptance)
-    error = actual - prediction["predicted_acceptance"]
+    target_type = prediction.get("target_type", "binary_first_pass_acceptance")
+    if target_type == "categorical_preference":
+        probabilities = prediction.get("option_probabilities") or {}
+        if actual_option not in probabilities:
+            raise ValueError("actual_option must be one of the predicted options")
+        actual = None
+        actual_first_pass = None
+        error = None
+    else:
+        actual = _unit_interval(actual_acceptance, "actual_acceptance")
+        actual_first_pass = 1 if actual >= 0.8 else 0
+        error = actual_first_pass - prediction["predicted_acceptance"]
 
     result = {
         "prediction_id": prediction_id,
         "predicted_acceptance": prediction["predicted_acceptance"],
         "confidence": prediction["confidence"],
+        "target_type": target_type,
         "actual_acceptance": actual,
-        "error": round(error, 4),
-        "absolute_error": round(abs(error), 4),
-        "squared_error": round(error * error, 4),
-        "direction": "overconfident" if error < -0.15 else (
-            "underconfident" if error > 0.15 else "calibrated"
-        ),
+        "actual_first_pass": actual_first_pass,
+        "actual_option": actual_option,
+        "predicted_option": prediction.get("predicted_option"),
+        "option_probabilities": prediction.get("option_probabilities"),
+        "top1_correct": (prediction.get("predicted_option") == actual_option
+                         if target_type == "categorical_preference" else None),
+        "error": round(error, 4) if error is not None else None,
+        "absolute_error": round(abs(error), 4) if error is not None else None,
+        "squared_error": round(error * error, 4) if error is not None else None,
+        "direction": ("categorical" if error is None else
+                      "overconfident" if error < -0.15 else
+                      "underconfident" if error > 0.15 else "calibrated"),
         "friction_hits": sorted(predicted & observed),
         "friction_misses": sorted(predicted - observed),
         "surprises": sorted(observed - predicted),
         "uncertain_dimensions": prediction.get("uncertain_dimensions", []),
         "resolved_at": utc_now(),
+        "evaluator_type": evaluator_type,
+        "evaluator_provenance": (
+            "explicit_user_review" if evaluator_type == "observed_human_outcome"
+            else "agent_inference"
+        ),
+        "candidate_id": prediction.get("candidate_id"),
+        "evidence_event_id": evidence_event_id,
     }
-    store.events.record(
-        "outcome", "agent_inference",
-        payload=result,
+    def unresolved(events):
+        if any((event.get("payload") or {}).get("prediction_id") == prediction_id
+               for event in events if event.get("kind") == "outcome"):
+            raise ValueError("prediction %r is already resolved" % prediction_id)
+
+    store.events.record_if(
+        "outcome", result["evaluator_provenance"], unresolved, payload=result,
         session_id=session_id, project_id=project_id, domain=domain,
     )
     return result
 
 
 def brier(pairs):
-    """Mean squared error between predicted and actual acceptance."""
+    """Binary Brier score for first-pass acceptance probabilities."""
     pairs = [(p, a) for p, a in pairs if p is not None and a is not None]
     if not pairs:
         return None
     return round(sum((p - a) ** 2 for p, a in pairs) / len(pairs), 4)
+
+
+def log_loss(pairs):
+    """Binary logarithmic loss with finite clipping at machine-safe bounds."""
+    pairs = [(p, a) for p, a in pairs if p is not None and a is not None]
+    if not pairs:
+        return None
+    eps = 1e-15
+    return round(-sum(a * math.log(max(eps, min(1 - eps, p)))
+                      + (1 - a) * math.log(max(eps, min(1 - eps, 1 - p)))
+                      for p, a in pairs) / len(pairs), 4)
 
 
 def calibration_bins(pairs, bins=10):

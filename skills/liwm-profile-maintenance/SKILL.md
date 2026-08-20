@@ -3,7 +3,7 @@ name: liwm-profile-maintenance
 description: Keep the profile healthy - resolve contradictions, retire stale beliefs, handle "that's not true about me", verify integrity, recover from corruption.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   framework: liwm
 ---
 
@@ -125,9 +125,10 @@ LIWM recovers automatically: a corrupt `user.json` is quarantined to
 event log itself is damaged, `liwm doctor` will say so and the newest backup in
 `backups/` is the fallback.
 
-Never hand-edit files under `~/.liwm`. Editing bypasses the provenance gate, the
-privacy gate and the audit log — the three things that make the profile
-trustworthy. Everything you need is a CLI command.
+Never hand-edit files under `~/.liwm`. Normal mutations must use the guarded
+framework APIs or CLI so provenance, privacy, audit and atomicity checks run.
+LIWM cannot prevent a same-user process from bypassing those checks with direct
+filesystem writes.
 
 ## Migration
 

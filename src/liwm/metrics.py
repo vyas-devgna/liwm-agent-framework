@@ -11,14 +11,15 @@ behaviour dominant so a good month a year ago cannot mask a bad week now.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from .jsonio import read_json_resilient, utc_now, write_json_atomic
-from .prediction import brier, calibration_bins
+from .prediction import brier, calibration_bins, log_loss
 
 __all__ = ["ROLLING_WINDOW", "compute_metrics", "MetricsStore", "improvement_trend"]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 #: How many recent outcomes dominate the rolling figures.
 ROLLING_WINDOW = 50
@@ -28,6 +29,14 @@ def _rate(numerator, denominator):
     if not denominator:
         return None
     return round(numerator / denominator, 4)
+
+
+def _ece(pairs, bins=10):
+    populated = [row for row in calibration_bins(pairs, bins=bins) if row["n"]]
+    total = sum(row["n"] for row in populated)
+    if not total:
+        return None
+    return round(sum(row["n"] * abs(row["gap"]) for row in populated) / total, 4)
 
 
 def compute_metrics(store, window=ROLLING_WINDOW):
@@ -64,6 +73,9 @@ def compute_metrics(store, window=ROLLING_WINDOW):
 
     acceptance_series = []       # (ts, acceptance)
     prediction_pairs = []        # (predicted, actual)
+    categorical_outcomes = []
+    calibration_by_domain = {}
+    calibration_by_evaluator = {}
     per_mode = {}
     per_scope_corrections = {"global": 0, "domain": 0, "project": 0}
     question_value = {"useful": 0, "redundant": 0, "unknown": 0}
@@ -137,11 +149,15 @@ def compute_metrics(store, window=ROLLING_WINDOW):
                 counters["assumptions_wrong"] += 1
             if payload.get("channel") in ("outcome", "behavioral", "repeated_behavioral"):
                 counters["inferred_corrections"] += 1
+        elif kind == "outcome" and payload.get("target_type") == "categorical_preference":
+            counters["predictions_resolved"] += 1
+            categorical_outcomes.append(payload)
         elif kind == "outcome" and "predicted_acceptance" in payload:
             counters["predictions_resolved"] += 1
-            prediction_pairs.append(
-                (payload.get("predicted_acceptance"), payload.get("actual_acceptance"))
-            )
+            pair = (payload.get("predicted_acceptance"), payload.get("actual_first_pass"))
+            prediction_pairs.append(pair)
+            calibration_by_domain.setdefault(e.get("domain") or "<none>", []).append(pair)
+            calibration_by_evaluator.setdefault(payload.get("evaluator_type") or "unknown", []).append(pair)
         elif kind == "scope_promotion":
             counters["scope_promotions"] += 1
             if payload.get("cross_domain"):
@@ -204,6 +220,7 @@ def compute_metrics(store, window=ROLLING_WINDOW):
         "calibration": {
             "samples": len(prediction_pairs),
             "brier_score": brier(prediction_pairs),
+            "log_loss": log_loss(prediction_pairs),
             "mean_absolute_error": (
                 round(sum(abs(p - a) for p, a in prediction_pairs) / len(prediction_pairs), 4)
                 if prediction_pairs else None
@@ -213,6 +230,35 @@ def compute_metrics(store, window=ROLLING_WINDOW):
                 if prediction_pairs else None
             ),
             "bins": calibration_bins(prediction_pairs),
+            "expected_calibration_error": _ece(prediction_pairs),
+            "top1_preference_accuracy": _rate(
+                len([row for row in categorical_outcomes if row.get("top1_correct")]),
+                len(categorical_outcomes),
+            ),
+            "categorical_samples": len(categorical_outcomes),
+            "categorical_brier_score": (
+                round(sum(
+                    sum((float(probability) - float(option == row.get("actual_option"))) ** 2
+                        for option, probability in (row.get("option_probabilities") or {}).items())
+                    for row in categorical_outcomes
+                ) / len(categorical_outcomes), 4) if categorical_outcomes else None
+            ),
+            "categorical_log_loss": (
+                round(sum(-math.log(max(1e-15, float(
+                    (row.get("option_probabilities") or {}).get(row.get("actual_option"), 0.0)
+                ))) for row in categorical_outcomes) / len(categorical_outcomes), 4)
+                if categorical_outcomes else None
+            ),
+            "by_domain": {
+                domain: {"samples": len(pairs), "brier_score": brier(pairs),
+                         "log_loss": log_loss(pairs), "ece": _ece(pairs)}
+                for domain, pairs in sorted(calibration_by_domain.items())
+            },
+            "by_evaluator": {
+                evaluator: {"samples": len(pairs), "brier_score": brier(pairs),
+                            "log_loss": log_loss(pairs), "ece": _ece(pairs)}
+                for evaluator, pairs in sorted(calibration_by_evaluator.items())
+            },
         },
         "scope_health": {
             "corrections_by_scope": per_scope_corrections,

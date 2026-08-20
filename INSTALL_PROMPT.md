@@ -53,24 +53,17 @@ malformed. Preserve all unrelated user configuration.
    project/session/learning directories, backups, and logs. Do not seed personal
    preferences or copy example profiles.
 
-5. If the host supports Agent Skills, install every `skills/liwm*` directory at
-   user scope:
+5. If the host supports Agent Skills, resolve its user-scoped skills directory:
    - Claude Code: the resolved user config directory's `skills/` directory,
      normally ~/.claude/skills/.
    - Codex: ~/.agents/skills/ (not ~/.codex/skills).
    - Generic host: its documented user-level Agent Skills directory.
-   Test whether the filesystem actually supports symlinks rather than inferring
-   it from the OS name (`liwm doctor --json` reports platform.supports_symlinks
-   and platform.filesystem_case_sensitive). Prefer per-skill directory symlinks;
-   otherwise copy each complete skill directory. On Windows, use directory
-   junctions or copies according to available privileges. On a case-insensitive
-   filesystem, treat skill names as case-insensitive so you never clobber one
-   directory with another. Never delete unrelated skills. Replace only an
-   existing LIWM-managed link/copy after backing it up. If the host has no skills
-   mechanism, skip this step and use the standalone block in step 6, which
-   carries the routing rules inline.
+   The lifecycle plan copies each complete LIWM skill with an input/output hash
+   and restores a pre-existing same-path file on uninstall. It never enumerates
+   or deletes unrelated skills. If the host has no skills mechanism, pass
+   `--no-skills` and use the standalone block in step 6.
 
-6. Add automatic activation through the host's active global instruction file:
+6. Add a consultation request through the host's documented global instruction file:
    - Claude Code: ~/.claude/CLAUDE.md (respect CLAUDE_CONFIG_DIR).
    - Codex: $CODEX_HOME/AGENTS.override.md if it is the active non-empty global
      file; otherwise $CODEX_HOME/AGENTS.md (CODEX_HOME defaults to ~/.codex).
@@ -78,26 +71,23 @@ malformed. Preserve all unrelated user configuration.
    Choose the block: `adapters/<host>/bootstrap.md` for a skills-capable host,
    `adapters/blocks/standalone.md` for a host without skills, and
    `adapters/blocks/compact.md` where the host has a tight instruction budget.
-   Run `liwm hosts plan --host <id> --block <path>` first: it prints every file
-   that would be touched and the byte-budget arithmetic. If the block plus the
-   file's existing content would exceed the host's documented budget, use the
+   Substitute `{{LIWM_COMMAND}}` in a temporary copy of the block. Run
+   `liwm install plan --host <id> --block <path> --output <plan.json>` first.
+   Inspect the serialized plan: it names every target, exact hash precondition,
+   backup, and expected output. If the resulting instruction file would exceed
+   the host's documented budget, use the
    compact block; never truncate the user's own instructions to make room.
-   Replace `{{LIWM_COMMAND}}` with the absolute command from step 3, and insert
-   exactly one block delimited by `<!-- LIWM:BEGIN ... -->` and
-   `<!-- LIWM:END -->`.
-   Before any edit, make a timestamped sibling backup. If a complete LIWM block
-   already exists, replace only that block; do not append a duplicate. If only
-   one marker exists or markers are nested, stop and report the malformed file.
-   If no instruction file exists, create it. Never overwrite, reorder, reformat,
-   or remove text outside the markers.
+   Apply only the approved file with `liwm install apply --plan <plan.json>` and
+   then run `liwm install verify --plan <plan.json>`. The CLI refuses malformed
+   markers or changed preconditions, backs up every overwritten file, performs
+   atomic writes, rolls back a partial failure, and is idempotent.
 
-7. Record non-personal installation metadata in ~/.liwm/config.json: framework
-   version/checkout, exact CLI command, host, skill destination, install method
-   (symlink/junction/copy), instruction file, bootstrap version, and install time.
+7. Keep the receipt written under ~/.liwm/installations/ and record non-personal
+   installation metadata in ~/.liwm/config.json: host, plan ID, and ownership.
    Preserve unknown existing config fields.
 
 8. Validate idempotence and safety:
-   - rerun the installation checks without creating another bootstrap block;
+   - rerun `install apply` and confirm it reports zero file changes;
    - verify all skill SKILL.md files are present;
    - run `liwm doctor --json`, `liwm schema list`, and the repository test runner;
    - confirm user.json and metrics.json are outside Git and no private state was
@@ -110,6 +100,6 @@ malformed. Preserve all unrelated user configuration.
 9. If onboarding is not complete, offer to begin LIWM onboarding now. If I
    accept, load the liwm-onboarding skill and ask exactly ten adaptive questions,
    one at a time. If I decline, remember only that onboarding was offered and
-   proceed in AUTO; do not nag. Future sessions must use AUTO automatically
-   without requiring me to mention LIWM.
+   proceed in AUTO; do not nag. The installed block requests AUTO consultation;
+   call it automatic only after that host passes the dated acceptance protocol.
 ```

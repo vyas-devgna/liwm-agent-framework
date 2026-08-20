@@ -22,10 +22,12 @@ inspectable (``liwm review``), attributable, and revertible.
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
 from .constitution import check_candidate, constitution_hash
+from .evidence import parse_ts
 from .jsonio import FileLock, backup_file, read_json_resilient, utc_now, write_json_atomic
 
 __all__ = [
@@ -36,7 +38,7 @@ __all__ = [
     "SelfImprovementStore",
 ]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 CANDIDATE_STATES = (
     "proposed",
@@ -134,6 +136,8 @@ class SelfImprovementStore:
 
     # -- storage -----------------------------------------------------------
     def _path(self, candidate_id, rejected=False):
+        if not re.fullmatch(r"cand_[0-9a-f]{8,32}", str(candidate_id or "")):
+            raise ValueError("invalid candidate id")
         base = self.rejected if rejected else self.candidates
         return base / ("%s.json" % candidate_id)
 
@@ -286,9 +290,12 @@ class SelfImprovementStore:
                            % (primary, gates["min_primary_improvement"]))
 
         regressions = []
+        guarded = replay.get("guarded_deltas") or {}
         for metric, spec in GUARDED_METRICS.items():
-            delta = (replay.get("guarded_deltas") or {}).get(metric)
+            delta = guarded.get(metric)
             if delta is None:
+                passed = False
+                reasons.append("guarded metric missing: %s" % metric)
                 continue
             worse = delta > spec["tolerance"] if spec["direction"] == "lower_is_better" \
                 else -delta > spec["tolerance"]
@@ -311,25 +318,47 @@ class SelfImprovementStore:
                 reasons.append("observed-outcome gate could not be evaluated: "
                                "no profile store supplied")
             else:
-                resolved_outcomes = sum(
-                    1 for event in store.events.iter_events(kinds={"outcome"})
-                    if "predicted_acceptance" in (event.get("payload") or {})
-                )
+                observed = {
+                    payload.get("prediction_id"): payload
+                    for event in store.events.iter_events(kinds={"outcome"})
+                    for payload in [event.get("payload") or {}]
+                    if payload.get("evaluator_type") == "observed_human_outcome"
+                    and event.get("provenance") == "explicit_user_review"
+                    and payload.get("candidate_id") == candidate.get("id")
+                    and payload.get("evidence_event_id")
+                    and parse_ts(event.get("ts")) >= parse_ts(candidate.get("created_at"))
+                    and payload.get("prediction_id")
+                }
+                resolved_outcomes = len(observed)
                 if resolved_outcomes < required_outcomes:
                     passed = False
                     reasons.append(
                         "only %d resolved prediction(s) behind this; need %d, or the "
                         "evidence is replay scoring itself"
                         % (resolved_outcomes, required_outcomes))
+                elif sum(int(row.get("actual_first_pass") or 0) for row in observed.values()) \
+                        / resolved_outcomes < 0.6:
+                    passed = False
+                    reasons.append("candidate observed first-pass rate is below 0.60")
+
+        benchmark = candidate.get("benchmark") or {}
+        if (not benchmark.get("passed")
+                or benchmark.get("candidate_id") != candidate.get("id")
+                or benchmark.get("evaluator_type") not in {
+                    "external_evaluator", "benchmark_ground_truth"
+                }):
+            passed = False
+            reasons.append("independent benchmark result missing or invalid")
 
         if gates["require_adversarial_pass"]:
             adv = candidate.get("adversarial") or {}
             if not adv:
                 passed = False
                 reasons.append("adversarial suite not run")
-            elif not adv.get("passed"):
+            elif (not adv.get("passed") or adv.get("candidate_id") != candidate.get("id")
+                  or not adv.get("suite_id")):
                 passed = False
-                reasons.append("adversarial suite failed: %s"
+                reasons.append("adversarial suite result missing identity or failed: %s"
                                % ", ".join(adv.get("failures", [])[:3]))
 
         return {

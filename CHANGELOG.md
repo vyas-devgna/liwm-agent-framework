@@ -5,7 +5,30 @@ and semantic versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-20
+
 ### Added
+
+- A persisted append sequence and bounded event-chain manifest, fail-closed
+  integrity checks, checkpoint/archive compaction, and crash-recovery journals.
+  Existing 0.1 event files are verified with their original hashes before the
+  migration assigns sequence numbers, so their evidence remains usable.
+- An event-derived Intent State Graph with typed nodes, edges, provenance,
+  confidence ceilings, trace/explain commands, and quarantine for invalid or
+  untrusted ancestry.
+- Typed provenance-aware observation paths, unique prediction outcomes,
+  evaluator/evidence linkage, binary and categorical proper scores, and a
+  durable Question Outcome Store.
+- A synthetic IntentBench runner/scorer contract smoke suite and local,
+  explicitly opt-in study export. Study export begins at the consent event
+  sequence, excludes quarantined records, bounds measurements, and never
+  uploads data.
+- Deterministic `install` and `uninstall` plan/apply/verify flows with exact
+  input/output hashes, precondition checks, backups, atomic writes, rollback,
+  idempotent re-apply, malformed-marker refusal, and disposable round-trip tests.
+- Complete wheel/sdist runtime assets, byte-reproducible wheel and normalized
+  sdist content-equivalence checks, and a
+  maintainer release checklist. Release publishing remains intentionally manual.
 
 - `liwm predict`, `liwm resolve` and `liwm predictions`. The Brier score and
   calibration bins in `liwm stats` were computed from prediction and outcome
@@ -15,22 +38,28 @@ and semantic versioning.
   give the commands, and `--unresolved` surfaces predictions made and never
   scored, since resolving only the favourable ones would bias every figure.
 
-- A promotion gate requiring **observed** outcomes. Replay scores a candidate
+- A promotion gate requiring candidate-specific, evidence-linked observed
+  outcomes. Replay scores a candidate
   against an acceptance model LIWM authored, so a candidate could win by fitting
   the evaluator rather than the person — training on your own benchmark, with
-  the usual result. `min_resolved_outcomes` now requires five predictions that
-  were committed before the user reacted and resolved against what they actually
-  did. The gate fails closed when it cannot be evaluated.
+  the usual result. `min_resolved_outcomes` now requires five distinct
+  predictions committed before trusted evidence and resolution. The gate fails
+  closed when it cannot be evaluated.
 
 ### Changed
 
 - The README no longer claims the gates "cannot be bypassed by a model that
   decides to edit `user.json` directly". An agent runs with the user's
-  filesystem authority; the defensible claim is that a compliant host cannot
-  bypass them through normal use, and that tampering leaves traces because a
-  per-event hash mismatch excludes the event from the fold. It is a self-hash,
-  not a signed chain.
-- The README states plainly that 0.1.0 contains no world model in the sense an
+  filesystem authority; the defensible claim is that normal compliant framework
+  use is guarded. Isolated hash mismatches are detected, but coherent rewriting
+  by a same-authority process need not leave evidence. It is a self-hash, not a
+  signed chain.
+- Project IDs and self-improvement candidate IDs are validated against path
+  traversal; project mutations are privacy-screened and preserve provenance,
+  confidence, and evidence instead of promoting inferred text to hard
+  constraints. Hard reset now keeps a complete recoverable snapshot, while
+  full deletion uses a shared lifecycle lock.
+- The README states plainly that 0.2.0 contains no world model in the sense an
   ML researcher means: no learned latent representation, no generative
   transition model, no counterfactual simulator over real trajectories. The
   accurate description is an evidence-sourced, uncertainty-aware persistent user
@@ -41,6 +70,21 @@ and semantic versioning.
   and threats to validity.
 - Python 3.14 added to the package classifiers; CI already tested it.
 
+### Migration and compatibility
+
+- Opening a 0.1 home creates the sequence manifest without rewriting or
+  invalidating legacy event evidence; migration and rebuild are covered by an
+  end-to-end regression test. The manifest is then mandatory—removing it or a
+  sequenced event makes rebuild fail closed instead of silently weakening
+  rejection, reset, forget, or rollback controls.
+- Persisted schemas add event `sequence`, install-plan receipts, intent-graph
+  materializations, compaction checkpoints, question outcomes, and study
+  consent state. These are backward-readable through the tested 0.1→0.2 path;
+  0.1 clients are not expected to understand the new 0.2 records.
+- IntentBench is a deterministic runner/scorer contract smoke suite, not
+  evidence that LIWM learns a latent world model or resists poisoning. Study
+  export remains local and opt-in; historical pre-consent events are excluded.
+
 ## [0.1.0] - 2026-08-20
 
 ### Added
@@ -49,7 +93,7 @@ and semantic versioning.
 - Evidence weighting, source ceilings, temporal decay, contradiction handling,
   scope promotion, cross-domain hypotheses, and human rejection memory.
 - AUTO/LOW/MEDIUM/HIGH/OFF modes with fatigue-aware active questioning.
-- Exactly-ten adaptive onboarding and synthetic user evaluation harness.
+- Adaptive onboarding targeting ten questions, with early stop, and a synthetic user evaluation harness.
 - Project intent, traceable assumptions/decisions, predictions, feedback,
   rolling metrics, retrospective, replay, and gated candidate rules.
 - Prompt-poisoning and sensitive-attribute defenses.
@@ -87,5 +131,6 @@ Codex skills directory resolved to `$CODEX_HOME/skills` instead of the
 cross-vendor `~/.agents/skills`. Episode pruning is on the roadmap rather than a
 knob that does nothing.
 
-[Unreleased]: https://github.com/vyas-devgna/liwm-agent-framework/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vyas-devgna/liwm-agent-framework/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/vyas-devgna/liwm-agent-framework/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vyas-devgna/liwm-agent-framework/releases/tag/v0.1.0

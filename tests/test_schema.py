@@ -218,6 +218,35 @@ class TestMigration(LiwmTestCase):
         self.assertTrue(report["migrated"])
         self.assertEqual(self.store.load()["schema_version"], CURRENT_SCHEMA_VERSION)
 
+    def test_v01_event_evidence_survives_manifest_migration(self):
+        from liwm.events import make_event
+        from liwm.jsonio import sha256_of
+        from liwm.migrate import migrate_home
+
+        event = make_event(
+            "observation", "direct_user_message",
+            observation={
+                "dimension": "interaction_profile.pace", "value": "fast",
+                "source_type": "explicit_statement", "polarity": "support",
+                "scope": "global", "decay_policy": "none",
+            },
+        )
+        event["schema_version"] = "0.1.0"
+        event.pop("sequence", None)
+        event["integrity"] = {
+            "algo": "sha256",
+            "hash": sha256_of({key: value for key, value in event.items() if key != "integrity"}),
+        }
+        shard = self.home / "events" / "2026-01"
+        shard.mkdir(parents=True)
+        (shard / "legacy.json").write_text(json.dumps(event), encoding="utf-8")
+
+        migrate_home(self.home, store=self.store)
+        profile = self.store.rebuild(reason="v01-migration")
+        belief = next(row for row in profile["beliefs"]
+                      if row["dimension"] == "interaction_profile.pace")
+        self.assertEqual(belief["value"], "fast")
+
     def test_unknown_dimension_is_quarantined_not_stored(self):
         """The taxonomy is an allowlist; unvetted dimensions cannot enter."""
         event = self.store.events.record(

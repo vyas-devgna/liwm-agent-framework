@@ -1,9 +1,6 @@
-"""Host registry: portability, detection honesty, and budget arithmetic.
+"""Host registry shape, path resolution, and budget arithmetic.
 
-The claim these tests defend is "LIWM works with any agent that reads a Markdown
-file at startup". That claim is only worth making if adding a host requires no
-code change, if detection never overstates what it knows, and if LIWM refuses to
-overflow an instruction budget that belongs to the user.
+These are configuration smoke tests, not live host acceptance tests.
 """
 
 from __future__ import annotations
@@ -66,15 +63,15 @@ class TestRegistryShape(unittest.TestCase):
                     % spec["id"],
                 )
 
-    def test_claude_code_hook_context_injection_is_recorded_as_unavailable(self):
-        """A design that depended on this would silently do nothing."""
+    def test_claude_code_hook_context_injection_capability_is_recorded(self):
         spec = get_host("claude-code")
-        self.assertFalse(spec["capabilities"]["hook_injects_context"])
+        self.assertTrue(spec["capabilities"]["hook_injects_context"])
 
 
 class TestPathResolution(unittest.TestCase):
     def tearDown(self):
-        for name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG_DIR"):
+        for name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG_DIR",
+                     "GEMINI_CLI_HOME"):
             os.environ.pop(name, None)
 
     def test_env_override_relocates_the_host_home(self):
@@ -112,6 +109,16 @@ class TestPathResolution(unittest.TestCase):
         self.assertEqual(skills_dir_for(get_host("codex")),
                          pathlib.Path.home() / ".agents" / "skills")
 
+    def test_codex_nonempty_override_is_the_active_instruction_file(self):
+        root = pathlib.Path(tempfile.mkdtemp(prefix="liwm-codex-host-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        os.environ["CODEX_HOME"] = str(root)
+        override = root / "AGENTS.override.md"
+        override.write_text("active\n", encoding="utf-8")
+        self.assertEqual(instruction_file_for(get_host("codex")), override)
+        override.write_text("", encoding="utf-8")
+        self.assertEqual(instruction_file_for(get_host("codex")), root / "AGENTS.md")
+
     def test_claude_skills_move_with_the_config_dir(self):
         os.environ["CLAUDE_CONFIG_DIR"] = _tmp("cc")
         self.assertEqual(skills_dir_for(get_host("claude-code")), _expect("cc", "skills"))
@@ -120,6 +127,13 @@ class TestPathResolution(unittest.TestCase):
 
     def test_a_host_without_skills_has_no_skills_directory(self):
         self.assertIsNone(skills_dir_for(get_host("gemini-cli")))
+
+    def test_gemini_relocation_uses_cli_home_state_directory(self):
+        os.environ["GEMINI_CLI_HOME"] = _tmp("gemini-relocated")
+        self.assertEqual(
+            instruction_file_for(get_host("gemini-cli")),
+            _expect("gemini-relocated", ".gemini", "GEMINI.md"),
+        )
 
     def test_paths_are_absolute_and_tilde_expanded(self):
         resolved = instruction_file_for(get_host("claude-code"))
@@ -256,6 +270,14 @@ class TestBudgets(unittest.TestCase):
         self.assertTrue(result["within_budget"])
         self.assertGreater(result["headroom_bytes"], 5000,
                            "the block must leave the user most of their own budget")
+
+    def test_update_budget_counts_the_replaced_block_only_once(self):
+        spec = get_host("windsurf")
+        old = "<!-- LIWM:BEGIN v0.1.0 -->\n" + ("x" * 5000) + "\n<!-- LIWM:END -->\n"
+        new = "<!-- LIWM:BEGIN v0.2.0 -->\ny\n<!-- LIWM:END -->\n"
+        result = check_budget(spec, new, existing_text=old)
+        self.assertTrue(result["within_budget"])
+        self.assertLess(result["total_bytes"], 100)
 
 
 class TestInstallationPlan(LiwmTestCase):

@@ -18,7 +18,8 @@ REQUIRED = {
     "README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
     "CODE_OF_CONDUCT.md", "CHANGELOG.md", "ROADMAP.md", "ARCHITECTURE.md",
     "PRIVACY.md", "THREAT_MODEL.md", "INSTALL_PROMPT.md", "UPDATE_PROMPT.md",
-    "UNINSTALL_PROMPT.md", ".gitignore", "pyproject.toml",
+    "UNINSTALL_PROMPT.md", "RELEASE_CHECKLIST.md", "MANIFEST.in",
+    ".gitignore", "pyproject.toml",
     ".github/workflows/ci.yml", ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
 }
@@ -114,9 +115,35 @@ def main():
 
     schemas = SchemaStore()
     expected_schemas = {"user", "event", "project-intent", "runtime-context",
-                        "metrics", "candidate-rule", "personal-strategy", "config"}
+                        "metrics", "candidate-rule", "personal-strategy", "config",
+                        "intentbench-case", "install-plan", "intent-graph"}
     if set(schemas.available()) != expected_schemas:
         fail(errors, "schema set mismatch: %s" % sorted(schemas.available()))
+
+    from liwm import __version__  # noqa: PLC0415
+    from liwm.migrate import CURRENT_SCHEMA_VERSION  # noqa: PLC0415
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"$', pyproject, re.M)
+    versions = {"python package": __version__, "schema": CURRENT_SCHEMA_VERSION,
+                "pyproject": match.group(1) if match else None}
+    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
+        versions[manifest] = json.loads((ROOT / manifest).read_text(encoding="utf-8"))["version"]
+    for skill_file in (ROOT / "skills").glob("*/SKILL.md"):
+        match = re.search(r"^  version:\s*(\S+)", skill_file.read_text(encoding="utf-8"), re.M)
+        versions[str(skill_file.relative_to(ROOT))] = match.group(1) if match else None
+    for block_file in block_files:
+        marker = re.search(r"<!-- LIWM:BEGIN v([^\s>]+)",
+                           block_file.read_text(encoding="utf-8"))
+        versions[str(block_file.relative_to(ROOT))] = marker.group(1) if marker else None
+    for module in (ROOT / "src" / "liwm").glob("*.py"):
+        match = re.search(r'^SCHEMA_VERSION = "([^"]+)"$',
+                          module.read_text(encoding="utf-8"), re.M)
+        if match:
+            versions[str(module.relative_to(ROOT))] = match.group(1)
+    mismatched = {name: version for name, version in versions.items() if version != __version__}
+    if mismatched:
+        fail(errors, "release version mismatch (expected %s): %s" % (__version__, mismatched))
 
     for prompt in ("INSTALL_PROMPT.md", "UPDATE_PROMPT.md", "UNINSTALL_PROMPT.md"):
         text = (ROOT / prompt).read_text(encoding="utf-8")

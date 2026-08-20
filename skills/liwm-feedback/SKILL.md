@@ -3,7 +3,7 @@ name: liwm-feedback
 description: Turn user reactions - corrections, edits, choices, acceptance, silence - into correctly scoped evidence. Use whenever the user reacts to something you produced.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   framework: liwm
 ---
 

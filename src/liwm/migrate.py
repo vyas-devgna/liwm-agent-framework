@@ -30,10 +30,10 @@ __all__ = [
     "version_tuple",
 ]
 
-CURRENT_SCHEMA_VERSION = "0.1.0"
+CURRENT_SCHEMA_VERSION = "0.2.0"
 
 #: Every version this build knows how to read.
-SUPPORTED_VERSIONS = ("0.1.0",)
+SUPPORTED_VERSIONS = ("0.1.0", "0.2.0")
 
 
 class MigrationError(RuntimeError):
@@ -72,8 +72,7 @@ def _noop(profile):
 
 MIGRATIONS = (
     # (from_version, to_version, function)
-    # Example for the future:
-    # ("0.1.0", "0.2.0", _add_multi_user_fields),
+    ("0.1.0", "0.2.0", _noop),
 )
 
 
@@ -105,6 +104,15 @@ def migrate_home(home, store=None):
     """Migrate every versioned document in a LIWM home directory."""
     home = Path(home)
     report = {"at": utc_now(), "home": str(home), "migrated": [], "skipped": [], "errors": []}
+
+    if store is not None and not store.events.manifest_path.is_file() \
+            and any(store.events._scan_paths()):
+        # v0.1 had no deletion-detecting manifest. Create its v0.2 chain once,
+        # under the append lock, before any new event is admitted.
+        from .jsonio import FileLock
+        with FileLock(store.events.lock_path, timeout=30.0):
+            store.events._write_manifest(store.events._index_existing())
+        report["migrated"].append({"file": "events-manifest.json", "steps": ["indexed v0.1 log"]})
 
     profile_path = home / "user.json"
     if profile_path.is_file():

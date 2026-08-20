@@ -10,13 +10,14 @@
     "event_id": { "type": "string", "pattern": "^evt_[0-9a-f]{8,}$" },
     "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "ts": { "type": "string", "format": "date-time" },
+    "sequence": { "type": "integer", "minimum": 1 },
     "kind": {
       "enum": [
         "observation", "correction", "rejection", "belief_endorsed",
         "question_asked", "question_answered", "question_skipped",
         "mode_selected", "assumption_made",
         "prediction", "artifact", "feedback", "outcome", "decision",
-        "project_intent_update",
+        "project_intent_update", "intent_node", "intent_edge",
         "scope_promotion", "scope_demotion", "strategy_update",
         "candidate_rule", "rule_promoted", "rule_rejected", "retrospective",
         "session_start", "session_end",

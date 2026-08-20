@@ -23,7 +23,7 @@ from .strategy import StrategyStore, update_from_events
 
 __all__ = ["run_retrospective", "build_episode", "propose_candidates"]
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 
 def build_episode(store, session_id, project_id=None):

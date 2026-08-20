@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -78,18 +79,71 @@ jobs:
           python -m liwm init --allow-in-repo
           python -m liwm eval modes
           python -m liwm eval converge --archetype impatient_technical_expert --rounds 10
-      # The wheel is byte-identical on every matrix cell, so it is built once.
-      # The pinned build backend also requires Python >= 3.10, which the 3.9
-      # floor jobs must not be asked to install.
+      # Build release candidates once; source tests still run on every matrix cell.
       - name: Install pinned build tooling
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: python -m pip install --disable-pip-version-check setuptools==84.0.0 wheel==0.48.0
-      - name: Build wheel without network dependencies
+      - name: Build wheel and sdist twice with a fixed source epoch
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-      - name: Validate wheel contents
+        shell: bash
+        run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python -c "import setuptools.build_meta as b; b.build_sdist('dist'); b.build_wheel('dist')"
+          python -c "import setuptools.build_meta as b; b.build_sdist('dist-repeat'); b.build_wheel('dist-repeat')"
+      - name: Validate contents, byte-reproducible wheel, and content-equivalent sdist
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: python tools/check_wheel.py
+        run: python tools/check_release.py --dist dist --compare dist-repeat
+      - name: Test and validate the extracted source distribution
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        shell: bash
+        run: |
+          mkdir "${{ runner.temp }}/liwm-sdist"
+          tar -xzf dist/*.tar.gz -C "${{ runner.temp }}/liwm-sdist"
+          cd "${{ runner.temp }}/liwm-sdist"/liwm-*
+          python tests/run_tests.py
+          python tools/validate_repo.py
+      - name: Smoke-test the installed wheel outside the checkout
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        shell: bash
+        run: |
+          python -m venv "${{ runner.temp }}/liwm-wheel"
+          "${{ runner.temp }}/liwm-wheel/bin/python" -m pip install --no-deps dist/*.whl
+          cd "${{ runner.temp }}"
+          export LIWM_HOME="${{ runner.temp }}/liwm-installed-home"
+          "${{ runner.temp }}/liwm-wheel/bin/liwm" --version
+          "${{ runner.temp }}/liwm-wheel/bin/liwm" schema list --json
+          "${{ runner.temp }}/liwm-wheel/bin/liwm" init --allow-in-repo
+          "${{ runner.temp }}/liwm-wheel/bin/liwm" verify --json
+
+  installed-artifact:
+    name: Installed wheel / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build once with the pinned release backend
+        run: |
+          python -m pip install --disable-pip-version-check setuptools==84.0.0 wheel==0.48.0
+          python -m pip wheel . --no-deps --no-build-isolation --wheel-dir smoke-dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install and exercise the wheel outside the checkout
+        shell: bash
+        run: |
+          python -m venv "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}"
+          "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/python" -m pip install --no-deps smoke-dist/*.whl
+          cd "${{ runner.temp }}"
+          export LIWM_HOME="${{ runner.temp }}/liwm-wheel-home-${{ matrix.python }}"
+          "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/liwm" --version
+          "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/liwm" schema list --json
+          "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/liwm" init --allow-in-repo
+          "${{ runner.temp }}/liwm-wheel-${{ matrix.python }}/bin/liwm" verify --json
 
   private-state-guard:
     runs-on: ubuntu-latest
@@ -100,7 +154,7 @@ jobs:
       - name: Reject accidentally tracked private LIWM state
         shell: bash
         run: |
-          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
+          if git ls-files | grep -E '(^|/)(user|metrics|runtime_context|personal-strategy|promoted-rules|question-outcomes|study-export)\.json$|(^|/)events/|\.liwm-(export|profile)\.json$'; then
             echo "Private LIWM state filename is tracked"
             exit 1
           fi

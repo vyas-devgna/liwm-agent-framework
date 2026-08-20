@@ -3,7 +3,7 @@ name: liwm-project-intent
 description: Maintain what a specific project is for - objectives, anti-goals, non-negotiables, constraints, assumptions - kept separate from the user's personal profile.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   framework: liwm
 ---
 

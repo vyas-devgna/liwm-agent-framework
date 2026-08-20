@@ -3,7 +3,7 @@ name: liwm-onboarding
 description: Run LIWM's ten-question onboarding to bootstrap a new user profile. Use when the user asks for "LIWM onboarding" or accepts the offer to set up their profile.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   framework: liwm
 ---
 

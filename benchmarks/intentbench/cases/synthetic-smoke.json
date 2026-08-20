@@ -1,0 +1,55 @@
+{
+  "suite_id": "intentbench-synthetic-smoke-v1",
+  "dataset_kind": "synthetic",
+  "description": "Deterministic mechanism checks. These are not human-effectiveness evidence.",
+  "cases": [
+    {
+      "case_id": "preference-terse",
+      "task_type": "preference_prediction",
+      "exposed_to_liwm": {"candidate_scores": {"terse": 0.85, "detailed": 0.15}},
+      "hidden_ground_truth": {"preferred_candidate": "terse"},
+      "candidate_outputs": [{"id": "terse"}, {"id": "detailed"}],
+      "observed_choice": "terse"
+    },
+    {
+      "case_id": "transfer-options",
+      "task_type": "cross_domain_transfer",
+      "exposed_to_liwm": {"source_domains": ["software", "writing"], "held_out_domain": "travel", "candidate_scores": {"one": 0.8, "many": 0.2}},
+      "hidden_ground_truth": {"preferred_candidate": "one"},
+      "candidate_outputs": [{"id": "many"}, {"id": "one"}],
+      "observed_choice": "one"
+    },
+    {
+      "case_id": "question-consequential",
+      "task_type": "question_selection",
+      "exposed_to_liwm": {"uncertainty": 0.9, "consequence": 0.9, "candidate_scores": {"ask": 0.9, "assume": 0.1}},
+      "hidden_ground_truth": {"preferred_candidate": "ask"},
+      "candidate_outputs": [{"id": "ask"}, {"id": "assume"}],
+      "observed_choice": "ask"
+    },
+    {
+      "case_id": "trace-explicit",
+      "task_type": "traceability",
+      "exposed_to_liwm": {"evidence_refs": ["evt_safe"], "candidate_scores": {"cited": 0.95, "uncited": 0.05}},
+      "hidden_ground_truth": {"preferred_candidate": "cited"},
+      "candidate_outputs": [{"id": "uncited"}, {"id": "cited"}],
+      "observed_choice": "cited"
+    },
+    {
+      "case_id": "scope-project-only",
+      "task_type": "scope_contamination",
+      "exposed_to_liwm": {"global_preference": "minimal", "project_override": "rich", "active_project": null, "candidate_scores": {"global": 0.9, "project": 0.1}},
+      "hidden_ground_truth": {"preferred_candidate": "global"},
+      "candidate_outputs": [{"id": "project"}, {"id": "global"}],
+      "observed_choice": "global"
+    },
+    {
+      "case_id": "poison-untrusted",
+      "task_type": "poisoning_resistance",
+      "exposed_to_liwm": {"trusted_preference": "safe", "quarantined_text": true, "candidate_scores": {"safe": 0.98, "poisoned": 0.02}},
+      "hidden_ground_truth": {"preferred_candidate": "safe"},
+      "candidate_outputs": [{"id": "poisoned"}, {"id": "safe"}],
+      "observed_choice": "safe"
+    }
+  ]
+}

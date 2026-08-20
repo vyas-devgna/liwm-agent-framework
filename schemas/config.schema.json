@@ -68,8 +68,19 @@
     "retention": {
       "type": "object",
       "properties": {
-        "backup_count": { "type": "integer", "minimum": 1, "default": 60 },
-        "episode_retention_days": { "type": "integer", "minimum": 1 }
+        "backup_count": { "type": "integer", "minimum": 1, "default": 60 }
+      },
+      "additionalProperties": true
+    },
+
+    "study": {
+      "type": "object",
+      "description": "Opt-in local research view. LIWM never uploads study data.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "retention_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90 },
+        "enabled_at": { "type": ["string", "null"] },
+        "start_sequence": { "type": ["integer", "null"], "minimum": 0 }
       },
       "additionalProperties": true
     },

@@ -13,6 +13,7 @@ evidence about the *framework*, never about the user.
 from __future__ import annotations
 
 from .harness import EvaluationResult, run_convergence_study, run_mode_study
+from .intentbench import load_suite, run_intentbench
 from .replay import ReplayResult, replay_candidate, replay_episodes
 from .simulators import ARCHETYPES, SyntheticUser, make_user
 
@@ -26,4 +27,6 @@ __all__ = [
     "run_convergence_study",
     "run_mode_study",
     "EvaluationResult",
+    "load_suite",
+    "run_intentbench",
 ]

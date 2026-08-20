@@ -129,10 +129,11 @@ class OnboardingSession:
 
     # -- state -------------------------------------------------------------
     def state(self):
-        asked, families, answered = [], {}, 0
+        asked, families, answered_ids = [], {}, []
         for e in self.store.events.iter_events(
             kinds={"question_asked", "onboarding_answer", "onboarding_started",
                    "onboarding_completed"},
+            session_id=self.session_id,
         ):
             payload = e.get("payload") or {}
             if payload.get("context") != "onboarding" and e.get("kind") == "question_asked":
@@ -145,13 +146,16 @@ class OnboardingSession:
                     if q:
                         families[q["family"]] = families.get(q["family"], 0) + 1
             elif e.get("kind") == "onboarding_answer":
-                answered += 1
+                qid = payload.get("question_id")
+                if qid:
+                    answered_ids.append(qid)
         profile = self.store.load()
         return {
             "status": profile.get("onboarding", {}).get("status", "not_started"),
             "asked_ids": asked,
             "family_counts": families,
-            "answered": answered,
+            "answered": len(answered_ids),
+            "answered_ids": answered_ids,
             "remaining": max(0, ONBOARDING_QUESTION_COUNT - len(asked)),
             "families_covered": len([f for f, c in families.items() if c > 0]),
             "min_families": MIN_FAMILIES,
@@ -192,32 +196,68 @@ class OnboardingSession:
         answer: a list of ``{"dimension", "value", "polarity"}`` dicts.  They are
         recorded at ``onboarding_answer`` strength - self-report, capped at 0.70.
         """
-        q = by_id(question_id) or {}
-        self.store.events.record(
+        from .privacy import screen_observation
+
+        q = by_id(question_id)
+        if q is None:
+            raise ValueError("unknown onboarding question %s" % question_id)
+        allowed_dimensions = set(q.get("resolves", ()))
+        unexpected = [obs.get("dimension") for obs in (observations or [])
+                      if obs.get("dimension") not in allowed_dimensions]
+        if unexpected:
+            raise ValueError("answer observations exceed the question dimensions: %s"
+                             % ", ".join(str(value) for value in unexpected))
+        normalized = []
+        for obs in observations or []:
+            screen_observation(
+                dimension=obs["dimension"], value=obs.get("value"),
+                text=obs.get("note"), strict=True,
+            )
+            normalized.append({
+                "dimension": obs["dimension"], "value": obs.get("value"),
+                "polarity": obs.get("polarity", "support"),
+                "source_type": "onboarding_answer", "scope": obs.get("scope", "global"),
+                "scope_key": obs.get("scope_key"),
+                "decay_policy": obs.get("decay_policy", "standard"),
+            })
+        screen_observation(text=answer_text, strict=True)
+
+        def unanswered(events):
+            session = [event for event in events if event.get("session_id") == self.session_id]
+            active = False
+            asked = answered = False
+            for event in session:
+                payload = event.get("payload") or {}
+                if event.get("kind") == "onboarding_started":
+                    active = True
+                elif event.get("kind") == "onboarding_completed":
+                    active = False
+                elif event.get("kind") == "question_asked" \
+                        and payload.get("context") == "onboarding" \
+                        and payload.get("question_id") == question_id:
+                    asked = True
+                elif event.get("kind") == "onboarding_answer" \
+                        and payload.get("question_id") == question_id:
+                    answered = True
+            if not active:
+                raise ValueError("onboarding session is not active")
+            if not asked:
+                raise ValueError("onboarding answer must match a question asked in this session")
+            if answered:
+                raise ValueError("onboarding question %s was already answered" % question_id)
+
+        self.store.events.record_if(
             "onboarding_answer", "direct_user_message",
+            unanswered,
             payload={
                 "question_id": question_id,
                 "answer": answer_text,
                 "dimensions": list(q.get("resolves", ())),
                 "family": q.get("family"),
+                "observations": normalized,
             },
             session_id=self.session_id,
         )
-        for obs in observations or []:
-            self.store.events.record(
-                "observation", "onboarding_answer",
-                observation={
-                    "dimension": obs["dimension"],
-                    "value": obs.get("value"),
-                    "polarity": obs.get("polarity", "support"),
-                    "source_type": "onboarding_answer",
-                    "scope": obs.get("scope", "global"),
-                    "scope_key": obs.get("scope_key"),
-                    "decay_policy": obs.get("decay_policy", "standard"),
-                    "note": "onboarding: %s" % question_id,
-                },
-                session_id=self.session_id,
-            )
         return self.store.rebuild(reason="onboarding_answer")
 
     def complete(self, summary=None):
