@@ -643,9 +643,18 @@ class ProfileStore:
         profile["constitution_hash"] = constitution_hash()
         return profile
 
-    def rebuild(self, reason="manual", as_of=None):
+    def rebuild(self, reason="manual", as_of=None, minimum_sequence=None):
         """Re-fold from events and persist.  This is also the conflict resolver."""
         with FileLock(self.lock_path):
+            if minimum_sequence is not None and self.path.is_file():
+                current, _ = read_json_resilient(
+                    self.path, backups_dir=self.backups, logs_dir=self.logs
+                )
+                materialized = (current or {}).get("materialized_from") or {}
+                if (materialized.get("as_of") is None
+                        and int(materialized.get("last_event_sequence") or 0)
+                        >= int(minimum_sequence)):
+                    return current
             # Folding under the materialisation lock is load-bearing. Folding
             # before acquiring it allows an older, slower fold to overwrite a
             # newer one. Event appends remain lock-free and distinct-file based.
@@ -689,7 +698,12 @@ class ProfileStore:
             },
             **kwargs,
         )
-        profile = self.rebuild(reason="observation")
+        # A concurrent rebuild may already include this event. Avoid serially
+        # repeating the same fold for every writer, which is especially costly
+        # on Windows filesystems.
+        profile = self.rebuild(
+            reason="observation", minimum_sequence=event.get("sequence")
+        )
         return event, profile
 
     def observe_user(self, dimension, value, source_type="explicit_statement", **kwargs):
