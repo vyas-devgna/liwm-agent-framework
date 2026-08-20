@@ -837,19 +837,23 @@ def cmd_intent(args):
         data = graph.graph(
             scope=args.scope, scope_key=args.scope_key,
             include_quarantined=args.include_quarantined,
+            include_inactive=args.include_inactive,
         )
         return _emit(args, data, text="intent graph: %d node(s), %d edge(s)" % (
             len(data["nodes"]), len(data["edges"]),
         ))
     if args.intent_action == "explain":
-        data = graph.explain(args.id)
+        data = graph.explain(args.id, history=args.history)
         element = data["element"]
-        return _emit(args, data, text="%s %s (%s, confidence %.2f)\n%d evidence ref(s)" % (
+        return _emit(args, data, text="%s %s (%s, effective confidence %.2f%s)\n"
+                                      "%d evidence ref(s)" % (
             element["type"], element.get("label", element["id"]), element["id"],
-            element["confidence"], len(data["basis"]),
+            element.get("effective_confidence", element.get("confidence", 0.0)),
+            "" if data["active"] else ", NOT ACTIVE: %s" % element.get("inactive_reason"),
+            len(data["basis"]),
         ))
     if args.intent_action == "trace":
-        data = graph.trace(args.id)
+        data = graph.trace(args.id, history=args.history)
         return _emit(args, data, text="trace %s: %d node(s), %d edge(s), %d event(s)" % (
             args.id, len(data["nodes"]), len(data["edges"]),
             len(data["evidence_events"]),
@@ -1981,10 +1985,17 @@ def build_parser():
     intent_graph.add_argument("--scope", choices=["global", "domain", "project", "session"])
     intent_graph.add_argument("--scope-key", dest="scope_key")
     intent_graph.add_argument("--include-quarantined", action="store_true")
+    intent_graph.add_argument(
+        "--include-inactive", action="store_true",
+        help="also list elements a forget tombstone removed, by id and reason only")
     intent_explain = intent_sub.add_parser("explain", help="explain one node or edge")
     intent_explain.add_argument("id")
+    intent_explain.add_argument(
+        "--history", action="store_true",
+        help="inspect the retained audit record of an element the user forgot")
     intent_trace = intent_sub.add_parser("trace", help="trace upstream evidence and intent")
     intent_trace.add_argument("id")
+    intent_trace.add_argument("--history", action="store_true")
 
     def add_intent_mutation_args(parser, types):
         parser.add_argument("--type", required=True, choices=sorted(types))

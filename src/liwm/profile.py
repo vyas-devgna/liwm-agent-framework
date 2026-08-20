@@ -23,6 +23,7 @@ from pathlib import Path
 from . import evidence as ev
 from .constitution import constitution_hash
 from .events import EventStore
+from .invalidation import apply_to_fold
 from .jsonio import (
     FileLock,
     backup_file,
@@ -350,29 +351,8 @@ class ProfileStore:
                 projects_seen.add(event["project_id"])
 
             if kind == "forget":
-                payload = event.get("payload") or {}
-                if payload.get("dimension"):
-                    dimension = payload["dimension"]
-                    for old_key in [k for k, value in meta.items()
-                                    if value.get("dimension") == dimension]:
-                        observations.pop(old_key, None)
-                        meta.pop(old_key, None)
-                    for rejected_key in [k for k in rejections if k[2] == dimension]:
-                        rejections.pop(rejected_key, None)
-                if payload.get("belief_key"):
-                    observations.pop(payload["belief_key"], None)
-                    meta.pop(payload["belief_key"], None)
-                if payload.get("project_id"):
-                    project_id = payload["project_id"]
-                    for old_key in [k for k, value in meta.items()
-                                    if value.get("scope") == "project"
-                                    and value.get("scope_key") == project_id]:
-                        observations.pop(old_key, None)
-                        meta.pop(old_key, None)
-                    for rejected_key in [k for k in rejections
-                                         if k[0] == "project" and k[1] == project_id]:
-                        rejections.pop(rejected_key, None)
-                    projects_seen.discard(project_id)
+                apply_to_fold(event.get("payload") or {},
+                              observations, meta, rejections, projects_seen)
                 continue
 
             if kind == "rejection":

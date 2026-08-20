@@ -797,9 +797,13 @@ PROSE_KEYS = frozenset({
 #: very thing the event exists to record.  ``issue`` labels are compared across
 #: prediction and outcome, so calibration depends on them surviving verbatim;
 #: ``quarantine_reason`` is written by LIWM and is the only record of why
-#: something was refused.
+#: something was refused.  ``belief_key`` is LIWM's own composite identity and
+#: is pipe-separated, so shape alone reads it as prose; without it here, a
+#: ``forget --belief`` tombstone reached disk with its subject stripped out and
+#: quietly forgot nothing.
 STRUCTURAL_KEYS = frozenset({
-    "value", "label", "dimension", "scope_key", "path", "issue", "quarantine_reason",
+    "value", "label", "dimension", "scope_key", "belief_key", "path", "issue",
+    "quarantine_reason",
 })
 
 #: A "token": an identifier, enum member, path, version or hash.  Prose is
