@@ -208,7 +208,8 @@ class TestCrashRecovery(TestInstallationLifecycle):
             "inst.apply_plan(inst.load_plan(%r))\n"
         ) % (str(Path(__file__).resolve().parent.parent / "src"),
              [step["target"] for step in plan["steps"]], step_index, str(self.plan_path))
-        return subprocess.run([sys.executable, "-c", script], capture_output=True)
+        return subprocess.run([sys.executable, "-c", script],
+                              capture_output=True, check=False)
 
     def setUp(self):
         super().setUp()

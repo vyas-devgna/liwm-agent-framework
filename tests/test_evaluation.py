@@ -11,7 +11,6 @@ import unittest
 from helpers import LiwmTestCase
 
 from liwm.evaluation import ARCHETYPES, make_user, run_convergence_study, run_mode_study
-from liwm.evaluation.harness import belief_accuracy
 from liwm.evaluation.replay import replay_candidate, replay_episodes
 from liwm.selfimprove import CandidateRule, GUARDED_METRICS, SelfImprovementStore
 

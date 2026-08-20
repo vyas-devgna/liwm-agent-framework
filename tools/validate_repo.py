@@ -98,7 +98,7 @@ def main():
 
     # Every host in the registry must be reachable from the adapter index, so a
     # newly supported host cannot ship undocumented.
-    from liwm.hosts import BUILTIN_HOSTS  # noqa: PLC0415 - local import keeps tooling flat
+    from liwm.hosts import BUILTIN_HOSTS
 
     index = (ROOT / "adapters" / "README.md").read_text(encoding="utf-8")
     for host in BUILTIN_HOSTS:
@@ -120,8 +120,8 @@ def main():
     if set(schemas.available()) != expected_schemas:
         fail(errors, "schema set mismatch: %s" % sorted(schemas.available()))
 
-    from liwm import __version__  # noqa: PLC0415
-    from liwm.migrate import CURRENT_SCHEMA_VERSION  # noqa: PLC0415
+    from liwm import __version__
+    from liwm.migrate import CURRENT_SCHEMA_VERSION
 
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r'^version = "([^"]+)"$', pyproject, re.M)

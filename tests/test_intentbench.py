@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from helpers import LiwmTestCase  # noqa: F401 - also adds src/ to sys.path
+from helpers import LiwmTestCase
 
-from liwm.evaluation.intentbench import load_suite, run_intentbench  # noqa: E402
+from liwm.evaluation.intentbench import load_suite, run_intentbench
 
 
 class TestIntentBench(unittest.TestCase):

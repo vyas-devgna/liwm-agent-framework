@@ -32,7 +32,10 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = []
+# Zero *runtime* dependencies is the promise. It is a promise about what you
+# install to use LIWM, not an argument against tools that catch bugs before a
+# user does. Nothing here is imported by the package.
+dev = ["ruff>=0.6", "coverage[toml]>=7.4"]
 
 [project.urls]
 Homepage = "https://github.com/vyas-devgna/liwm-agent-framework"
@@ -73,3 +76,34 @@ where = ["src"]
 "share/liwm/skills/liwm-self-improvement" = ["skills/liwm-self-improvement/SKILL.md"]
 "share/liwm/skills/liwm-traceability" = ["skills/liwm-traceability/SKILL.md"]
 "share/liwm/benchmarks/intentbench/cases" = ["benchmarks/intentbench/cases/*.json"]
+
+# Development tooling. LIWM's *runtime* dependency count is zero and stays
+# zero; that is a promise about what you install to use it, not an argument
+# against tools that catch bugs before you do.
+#
+# The rule set is deliberately narrow. `ruff --select ALL` reports 660 findings
+# here, 493 of which are "use an f-string instead of %". This codebase uses %
+# formatting throughout and that is a decision, not a defect; churning 493
+# lines to satisfy a linter's taste would bury the findings that matter.
+# Selected: real errors, undefined names, unused code, and likely bugs.
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "W", "PLW", "RUF010", "RUF100"]
+ignore = [
+    "B008",     # a default computed once at import is sometimes the point
+    "PLW2901",  # rebinding a loop variable is clearer than inventing a name
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]  # assertRaises-style asserts are the test
+
+[tool.coverage.run]
+branch = true
+source = ["src/liwm"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

@@ -71,9 +71,8 @@ class TestQuestionOutcomes(LiwmTestCase):
             self._record(index, post=0.0, session="one-session")
         clustered = self._estimate()["effective_sample_size"]
 
-        other = QuestionOutcomeStore(self.store)
         self.setUp()
-        self.outcomes = other = QuestionOutcomeStore(self.store)
+        self.outcomes = QuestionOutcomeStore(self.store)
         for index in range(6):
             self._record(index, post=0.0, session="s%d" % index)
         spread = self._estimate()["effective_sample_size"]

@@ -208,7 +208,7 @@ class ProfileStore:
 
         try:
             return self.rebuild(reason="recovered_from_event_log")
-        except Exception as exc:  # noqa: BLE001 - last-resort path
+        except Exception as exc:
             self.last_recovery_note = "%s | fold failed (%s); falling back to backup" % (
                 self.last_recovery_note or "profile unreadable", exc
             )
@@ -228,7 +228,7 @@ class ProfileStore:
                     on_disk, _ = read_json_resilient(
                         self.path, backups_dir=self.backups, logs_dir=self.logs
                     )
-                except Exception:  # noqa: BLE001 - treat unreadable as absent
+                except Exception:
                     on_disk = None
             current_rev = (on_disk or {}).get("revision", 0)
             if expected_revision is not None and current_rev != expected_revision:
@@ -299,7 +299,6 @@ class ProfileStore:
         )
         skipped_by_branch = 0
         if branch_marker:
-            marker_ts = branch_marker.get("ts", "")
             marker_sequence = int(branch_marker.get("sequence") or 0)
             if branch_marker.get("kind") == "rollback":
                 cutoff = (branch_marker.get("payload") or {}).get("cutoff", "")

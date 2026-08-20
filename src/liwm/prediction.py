@@ -14,7 +14,6 @@ from __future__ import annotations
 import uuid
 import math
 
-from .evidence import clamp
 from .jsonio import utc_now
 
 __all__ = [

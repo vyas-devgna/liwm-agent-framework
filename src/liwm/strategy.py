@@ -261,7 +261,7 @@ def update_from_events(store, strategy_store=None, window=60):
             adjustments["auto_high_threshold"] = 0.52
 
     if assumption_total >= 3 or assumption_wrong:
-        error_rate = assumption_wrong / max(1, max(assumption_total, feedback_total))
+        error_rate = assumption_wrong / max(1, assumption_total, feedback_total)
         adjustments["assumption_boldness"] = max(0.1, 0.85 - 1.4 * error_rate)
 
     if feedback_total >= 5:

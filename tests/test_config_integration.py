@@ -9,10 +9,10 @@ from pathlib import Path
 
 import helpers  # noqa: F401 - adds src/ to sys.path
 
-from liwm.cli import main  # noqa: E402
-from liwm.config import ConfigStore  # noqa: E402
-from liwm.integration import MalformedBootstrap, remove_bootstrap, upsert_bootstrap  # noqa: E402
-from liwm.profile import ProfileStore  # noqa: E402
+from liwm.cli import main
+from liwm.config import ConfigStore
+from liwm.integration import MalformedBootstrap, remove_bootstrap, upsert_bootstrap
+from liwm.profile import ProfileStore
 
 
 BLOCK = """<!-- LIWM:BEGIN v0.1.0 -->

@@ -430,7 +430,7 @@ class IntentGraphStore:
                 refs = [element["source"], element["target"]] + refs
             return refs
 
-        for element_id, element in elements.items():
+        for element_id in elements:
             if origin[element_id].get("event_id") in invalidated:
                 inactive[element_id] = "forgotten_evidence"
 

@@ -31,10 +31,9 @@ from .hosts import detect_hosts
 from .jsonio import FileLock, lifecycle_lock_path, read_json_resilient, utc_now, write_json_atomic
 from .metrics import MetricsStore
 from .migrate import CURRENT_SCHEMA_VERSION, migrate_home
-from .modes import MODE_PROFILES, Signals, mode_profile, resolve_auto
+from .modes import Signals, mode_profile, resolve_auto
 from .onboarding import OnboardingSession
 from .paths import ensure_layout, is_inside_git_repo, liwm_home
-from .privacy import redact
 from .profile import ProfileStore
 from .projects import INTENT_SECTIONS, ProjectStore, slugify_project
 from .questions import QuestionPlanner
@@ -92,7 +91,7 @@ def _signals(args):
         try:
             data = json.loads(raw)
         except ValueError as exc:
-            raise SystemExit("--signals must be JSON: %s" % exc)
+            raise SystemExit("--signals must be JSON: %s" % exc) from exc
     for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
                 "specification_completeness", "recent_correction_rate", "fatigue"):
         value = getattr(args, key, None)
@@ -128,7 +127,7 @@ def _validate_state_documents(home, schema_store, include_events=False):
             found = schema_store.validate(document, schema_name)
             if found:
                 errors[str(path)] = found[:20]
-        except Exception as exc:  # noqa: BLE001 - health-check boundary
+        except Exception as exc:
             errors[str(path)] = [{"path": "", "message": str(exc)}]
     return {"checked": checked, "errors": errors, "ok": not errors}
 
@@ -2358,7 +2357,7 @@ def main(argv=None):
         return 130
     except SystemExit:
         raise
-    except Exception as exc:  # noqa: BLE001 - CLI boundary
+    except Exception as exc:
         if getattr(args, "json", False):
             sys.stdout.write(json.dumps({"error": str(exc),
                                          "type": type(exc).__name__}, indent=2) + "\n")

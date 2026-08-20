@@ -18,13 +18,12 @@ mutating history.
 
 from __future__ import annotations
 
-import os
 import re
 import uuid
 import gzip
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from .evidence import PROVENANCE_TRUST, TRUSTED_PROVENANCE
@@ -36,7 +35,7 @@ from .jsonio import (
     utc_now_ms,
     write_json_atomic,
 )
-from .privacy import SensitiveAttributeRefused, redact, screen_observation
+from .privacy import SensitiveAttributeRefused, screen_observation
 from .taxonomy import is_known_dimension
 
 __all__ = [
@@ -488,7 +487,7 @@ class EventStore:
                             }),
                         }
                 live.append(event)
-            except Exception:  # noqa: BLE001 - a single bad file must not kill a fold
+            except Exception:
                 self._log_bad(path)
         sources.extend(sorted(live, key=lambda event: int(event.get("sequence") or 0)))
         sources.sort(key=lambda event: int((event or {}).get("sequence") or 0))
@@ -568,13 +567,13 @@ class EventStore:
                                          "event_id": event_id})
                     archive_ids.add(event_id)
                 archive_frontier = max(archive_frontier, int(row.get("last_sequence") or 0))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             problems.append({"path": str(self.archive_index_path),
                              "issue": "archive_invalid", "detail": str(exc)})
 
         try:
             manifest = self._manifest()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {"checked": 0, "tampered": 0, "unreadable": 0,
                     "missing_integrity": 0, "manifest_present": True,
                     "ok": False, "problems": [{"path": str(self.manifest_path),
@@ -602,7 +601,7 @@ class EventStore:
         for offset, path in enumerate(disk_paths, 1):
             try:
                 event = read_json(path)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 unreadable += 1
                 problems.append({"path": str(path), "issue": "unreadable", "detail": str(exc)})
                 continue

@@ -64,7 +64,7 @@ class TestConcurrency(LiwmTestCase):
                 store.observe("working_style.iteration_style", "many_iterations",
                               source_type="single_behavioral", provenance="agent_inference",
                               session_id="s%d" % i)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
@@ -98,7 +98,7 @@ class TestConcurrency(LiwmTestCase):
         def run(worker):
             try:
                 worker()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=run, args=(worker,)) for worker in workers]

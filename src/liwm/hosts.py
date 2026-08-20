@@ -362,7 +362,7 @@ def load_registry(home=None):
     overlay_path = Path(home) / USER_REGISTRY_FILENAME
     try:
         overlay = read_json(overlay_path, default=None)
-    except Exception:  # noqa: BLE001 - an unreadable overlay must not be fatal
+    except Exception:  # an unreadable overlay must not be fatal
         return [hosts[hid] for hid in order]
     if not isinstance(overlay, dict):
         return [hosts[hid] for hid in order]
@@ -496,7 +496,6 @@ def installation_plan(host_id, home=None, block_text=""):
     if spec is None:
         return None
 
-    config_dir = config_dir_for(spec)
     global_file = instruction_file_for(spec)
     steps = []
 
