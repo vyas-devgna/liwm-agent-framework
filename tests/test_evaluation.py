@@ -135,6 +135,22 @@ class TestReplayAndGating(LiwmTestCase):
             })
         return episodes
 
+    def _record_observed_outcomes(self, n=6):
+        """Resolve *n* real predictions so the observed-outcome gate is satisfied.
+
+        Replay alone cannot promote anything: it scores a candidate against an
+        acceptance model LIWM wrote, so a candidate can win by fitting the
+        evaluator rather than the person. Promotion also requires outcomes that
+        were committed to before the user reacted and scored against what they
+        actually did.
+        """
+        from liwm.prediction import make_prediction, record_prediction, resolve_prediction
+
+        for i in range(n):
+            prediction = make_prediction(predicted_acceptance=0.7, confidence=0.6)
+            record_prediction(self.store, prediction, session_id="s%d" % i)
+            resolve_prediction(self.store, prediction["id"], 0.75, session_id="s%d" % i)
+
     def test_replay_prefers_a_policy_that_drops_wasted_questions(self):
         episodes = self._episodes()
         incumbent = replay_episodes(episodes)["aggregate"]
@@ -166,9 +182,11 @@ class TestReplayAndGating(LiwmTestCase):
         self.assertGreater(replay["primary_delta"], 0)
         si.attach_replay(candidate["id"], replay)
         si.attach_adversarial(candidate["id"], {"passed": True, "failures": []})
+        self._record_observed_outcomes()
 
         promoted, verdict = si.promote(candidate["id"], store=self.store)
         self.assertTrue(verdict["passed"], verdict["reasons"])
+        self.assertGreaterEqual(verdict["resolved_outcomes"], 5)
         self.assertEqual(promoted["state"], "promoted")
         active = si.active_rules()
         self.assertEqual(len(active), 1)
@@ -223,6 +241,7 @@ class TestReplayAndGating(LiwmTestCase):
         )
         si.attach_replay(candidate["id"], replay_candidate(self._episodes(), candidate))
         si.attach_adversarial(candidate["id"], {"passed": True, "failures": []})
+        self._record_observed_outcomes()
         si.promote(candidate["id"], store=self.store)
         self.assertTrue(si.revert(candidate["id"], store=self.store, reason="test"))
         self.assertEqual(si.active_rules(), [])

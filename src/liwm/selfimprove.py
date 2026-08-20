@@ -67,6 +67,13 @@ PROMOTION_GATES = {
     "require_adversarial_pass": True,
     "require_constitution_clean": True,
     "max_guarded_regression": 0.0,   # any breach beyond per-metric tolerance fails
+    # Replay scores a candidate against a model of acceptance that LIWM itself
+    # authored, so a candidate can win on replay by fitting the evaluator rather
+    # than the person -- training on your own benchmark, with the usual result.
+    # Promotion therefore also requires outcomes that were *observed*: predictions
+    # committed before the user reacted and resolved afterwards against what they
+    # actually did.  Without them, replay is the only witness and is not enough.
+    "min_resolved_outcomes": 5,
 }
 
 
@@ -239,8 +246,13 @@ class SelfImprovementStore:
         return candidate
 
     # -- the gate ----------------------------------------------------------
-    def evaluate_gate(self, candidate, gates=None):
-        """Decide whether *candidate* may be promoted; return a verdict dict."""
+    def evaluate_gate(self, candidate, gates=None, store=None):
+        """Decide whether *candidate* may be promoted; return a verdict dict.
+
+        Pass *store* to enforce the observed-outcome gate.  It is optional only
+        so that the gate arithmetic stays unit-testable in isolation; the CLI
+        always supplies it, and a verdict reached without it says so.
+        """
         gates = dict(PROMOTION_GATES, **(gates or {}))
         reasons = []
         passed = True
@@ -288,6 +300,28 @@ class SelfImprovementStore:
             reasons.append("guarded regressions: %s"
                            % ", ".join("%s %+.3f" % (r["metric"], r["delta"]) for r in regressions))
 
+        # Grounding: how many real outcomes stand behind this, as opposed to
+        # modelled ones?  Counted from resolved predictions, which are the only
+        # record in LIWM of a commitment made before the user reacted.
+        required_outcomes = int(gates.get("min_resolved_outcomes", 0) or 0)
+        resolved_outcomes = None
+        if required_outcomes:
+            if store is None:
+                passed = False
+                reasons.append("observed-outcome gate could not be evaluated: "
+                               "no profile store supplied")
+            else:
+                resolved_outcomes = sum(
+                    1 for event in store.events.iter_events(kinds={"outcome"})
+                    if "predicted_acceptance" in (event.get("payload") or {})
+                )
+                if resolved_outcomes < required_outcomes:
+                    passed = False
+                    reasons.append(
+                        "only %d resolved prediction(s) behind this; need %d, or the "
+                        "evidence is replay scoring itself"
+                        % (resolved_outcomes, required_outcomes))
+
         if gates["require_adversarial_pass"]:
             adv = candidate.get("adversarial") or {}
             if not adv:
@@ -302,6 +336,7 @@ class SelfImprovementStore:
             "passed": passed,
             "reasons": reasons,
             "episodes": episodes,
+            "resolved_outcomes": resolved_outcomes,
             "primary_delta": primary,
             "regressions": regressions,
             "gates": gates,
@@ -313,7 +348,7 @@ class SelfImprovementStore:
         candidate = self.read(candidate_id)
         if candidate is None:
             raise KeyError(candidate_id)
-        verdict = self.evaluate_gate(candidate, gates=gates)
+        verdict = self.evaluate_gate(candidate, gates=gates, store=store)
         candidate["decision"] = {
             "outcome": "promoted" if verdict["passed"] else "rejected",
             "verdict": verdict,

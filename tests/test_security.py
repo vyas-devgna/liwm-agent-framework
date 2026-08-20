@@ -323,5 +323,79 @@ class TestFreeTextRetention(LiwmTestCase):
 
 
 
+
+class TestReplayCannotPromoteAlone(LiwmTestCase):
+    """Replay scores a candidate against an acceptance model LIWM wrote itself.
+
+    A candidate can therefore win on replay by fitting the evaluator rather than
+    the person -- training on your own benchmark. Promotion additionally requires
+    outcomes that were *observed*: predictions committed before the user reacted
+    and resolved against what they actually did.
+    """
+
+    def _ready_candidate(self, si):
+        from liwm.evaluation.replay import replay_candidate
+        from liwm.selfimprove import CandidateRule
+
+        episodes = [{
+            "session_id": "s%d" % i, "mode": "medium",
+            "questions": [{"id": "q_%d" % i, "utility": 2.0, "class": "technical",
+                           "style": "direct_technical", "family": "verbosity"}],
+            "answers": [{"id": "q_%d" % i, "value": "useful", "changed_plan": True}],
+            "feedback": [{"kind": "mostly_right", "acceptance": 0.8}],
+            "assumptions": [], "mean_acceptance": 0.8,
+            "counts": {"questions_asked": 1},
+        } for i in range(14)]
+
+        candidate = si.propose(
+            CandidateRule.create(
+                title="Raise the bar", statement="Ask only above a higher bar.",
+                surface="interaction", primary_metric="question_ignore_rate",
+                parameters={"min_utility_delta": 0.5},
+            ),
+            store=self.store,
+        )
+        si.attach_replay(candidate["id"], replay_candidate(episodes, candidate))
+        si.attach_adversarial(candidate["id"], {"passed": True, "failures": []})
+        return candidate
+
+    def test_a_candidate_with_no_observed_outcomes_is_refused(self):
+        from liwm.selfimprove import SelfImprovementStore
+
+        si = SelfImprovementStore(self.home)
+        candidate = self._ready_candidate(si)
+        _, verdict = si.promote(candidate["id"], store=self.store)
+
+        self.assertFalse(verdict["passed"])
+        self.assertTrue(any("resolved prediction" in r for r in verdict["reasons"]),
+                        verdict["reasons"])
+        self.assertEqual(si.active_rules(), [])
+
+    def test_the_gate_cannot_be_satisfied_by_predictions_nobody_resolved(self):
+        """An unresolved prediction is a commitment, not an outcome."""
+        from liwm.prediction import make_prediction, record_prediction
+        from liwm.selfimprove import SelfImprovementStore
+
+        si = SelfImprovementStore(self.home)
+        candidate = self._ready_candidate(si)
+        for i in range(10):
+            record_prediction(self.store, make_prediction(0.7, 0.6), session_id="s%d" % i)
+
+        _, verdict = si.promote(candidate["id"], store=self.store)
+        self.assertFalse(verdict["passed"])
+        self.assertEqual(verdict["resolved_outcomes"], 0)
+
+    def test_the_gate_cannot_be_evaluated_without_a_store(self):
+        """Absent evidence fails closed rather than being waved through."""
+        from liwm.selfimprove import SelfImprovementStore
+
+        si = SelfImprovementStore(self.home)
+        candidate = self._ready_candidate(si)
+        verdict = si.evaluate_gate(candidate, store=None)
+        self.assertFalse(verdict["passed"])
+        self.assertTrue(any("no profile store" in r for r in verdict["reasons"]))
+
+
+
 if __name__ == "__main__":
     unittest.main()

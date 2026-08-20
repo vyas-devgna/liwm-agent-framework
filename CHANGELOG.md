@@ -15,6 +15,13 @@ and semantic versioning.
   give the commands, and `--unresolved` surfaces predictions made and never
   scored, since resolving only the favourable ones would bias every figure.
 
+- A promotion gate requiring **observed** outcomes. Replay scores a candidate
+  against an acceptance model LIWM authored, so a candidate could win by fitting
+  the evaluator rather than the person — training on your own benchmark, with
+  the usual result. `min_resolved_outcomes` now requires five predictions that
+  were committed before the user reacted and resolved against what they actually
+  did. The gate fails closed when it cannot be evaluated.
+
 ### Changed
 
 - The README no longer claims the gates "cannot be bypassed by a model that
