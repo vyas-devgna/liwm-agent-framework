@@ -47,14 +47,26 @@ SCHEMA_VERSION = "0.3.0"
 #: the promotion gate reads, and the reason shadow evidence cannot masquerade
 #: as a user outcome.
 EXPERIMENT_MODES = {
-    "shadow": {"user_facing": False,
-               "note": "candidate computes, incumbent ships; no human exposure"},
-    "canary": {"user_facing": True,
-               "note": "candidate ships to a registered fraction of interactions"},
-    "ab": {"user_facing": True,
-           "note": "registered random assignment against the incumbent"},
+    "shadow": {
+        "user_facing": False, "default_exposure": 0.0, "max_exposure": 0.0,
+        "note": "candidate computes, incumbent ships; no human exposure",
+    },
+    "canary": {
+        # A ramp. Small on purpose: the point is to find out whether the
+        # candidate is safe on a few real interactions, not to run a trial.
+        "user_facing": True, "default_exposure": 0.10, "max_exposure": 0.25,
+        "note": "candidate ships to a small registered fraction of interactions",
+    },
+    "ab": {
+        # A trial. Balanced by default, because an unbalanced comparison wastes
+        # the participant's time for less power. This is the only reason `ab`
+        # exists as a separate mode: with a canary's cap it would be a canary
+        # with a different name.
+        "user_facing": True, "default_exposure": 0.50, "max_exposure": 0.50,
+        "note": "balanced registered assignment against the incumbent",
+    },
 }
-MAX_CANARY_EXPOSURE = 0.25
+MAX_CANARY_EXPOSURE = EXPERIMENT_MODES["canary"]["max_exposure"]
 
 
 class ExperimentStore:
@@ -82,20 +94,23 @@ class ExperimentStore:
                      if row["candidate_id"] == candidate_id and row["state"] == "running"),
                     None)
 
-    def enroll(self, candidate_id, mode, store=None, exposure=0.1, seed=None):
+    def enroll(self, candidate_id, mode, store=None, exposure=None, seed=None):
         """Register a candidate for evaluation.  Requires explicit consent."""
         if mode not in EXPERIMENT_MODES:
             raise ValueError("unknown experiment mode %r" % mode)
+        spec = EXPERIMENT_MODES[mode]
+        if exposure is None:
+            exposure = spec["default_exposure"]
         config = ConfigStore(self.home).load()
         if not config.get("learning", {}).get("experiments_enabled", False):
             raise ValueError(
                 "experiments are off; run 'liwm config set learning.experiments_enabled "
                 "true' to allow LIWM to evaluate its own candidate rules on your work")
         exposure = float(exposure)
-        if EXPERIMENT_MODES[mode]["user_facing"]:
-            if not 0.0 < exposure <= MAX_CANARY_EXPOSURE:
-                raise ValueError("user-facing exposure must be in (0, %.2f]"
-                                 % MAX_CANARY_EXPOSURE)
+        if spec["user_facing"]:
+            if not 0.0 < exposure <= spec["max_exposure"]:
+                raise ValueError("%s exposure must be in (0, %.2f]"
+                                 % (mode, spec["max_exposure"]))
         else:
             exposure = 0.0
         if self.enrolled(candidate_id):
@@ -105,7 +120,7 @@ class ExperimentStore:
             "experiment_id": "exp_%s" % uuid.uuid4().hex[:12],
             "candidate_id": candidate_id,
             "mode": mode,
-            "user_facing": EXPERIMENT_MODES[mode]["user_facing"],
+            "user_facing": spec["user_facing"],
             "exposure": exposure,
             "seed": seed or uuid.uuid4().hex[:16],
             "state": "running",

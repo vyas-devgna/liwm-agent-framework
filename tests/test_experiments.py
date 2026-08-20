@@ -149,3 +149,27 @@ class ShadowEvidenceCannotPromote(_Consenting):
         self.assertTrue(verdict["passed"], verdict["reasons"])
         self.assertEqual(verdict["resolved_outcomes"], 6)
         self.assertGreaterEqual(verdict["user_facing_units"], 6)
+
+
+class AbIsNotACanaryWithADifferentName(_Consenting):
+    def setUp(self):
+        super().setUp()
+        self._consent()
+        self.experiments = ExperimentStore(self.home)
+
+    def test_the_two_user_facing_modes_have_different_designs(self):
+        canary = self.experiments.enroll("cand_a", "canary", store=self.store)
+        ab = self.experiments.enroll("cand_b", "ab", store=self.store)
+        self.assertEqual(canary["exposure"], 0.10)
+        self.assertEqual(ab["exposure"], 0.50)
+
+    def test_a_canary_cannot_be_ramped_to_a_trial(self):
+        with self.assertRaises(ValueError):
+            self.experiments.enroll("cand_a", "canary", store=self.store, exposure=0.5)
+
+    def test_an_ab_arm_is_roughly_balanced(self):
+        self.experiments.enroll("cand_b", "ab", store=self.store, seed="fixed")
+        exposed = sum(self.experiments.assign("cand_b", "task-%d" % i)["exposure"]
+                      == "user_facing" for i in range(400))
+        self.assertGreater(exposed, 160)
+        self.assertLess(exposed, 240)

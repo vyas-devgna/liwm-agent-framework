@@ -2259,8 +2259,9 @@ def build_parser():
                    choices=["shadow", "canary", "ab"],
                    help="shadow computes without shipping; canary and ab put the "
                         "candidate in front of the user and need consent")
-    s.add_argument("--exposure", type=float, default=0.1,
-                   help="fraction of eligible interactions for a user-facing arm")
+    s.add_argument("--exposure", type=float,
+                   help="fraction of eligible interactions for a user-facing arm; "
+                        "defaults to 0.10 for canary, 0.50 for ab")
     s.add_argument("--seed", help="fix the assignment seed for a registered design")
     s.add_argument("--unit", help="interaction id to assign, committed before output")
     s.add_argument("--session")
