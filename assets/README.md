@@ -17,8 +17,26 @@ problem — remembering *indiscriminately* is. So the mark is an elephant head
 whose trunk curls into a question mark: memory that interrogates its sources.
 
 One drawing, four files. `logo-dark.png`, `favicon.png` and
-`social-preview.png` are all derived from `logo.png` programmatically rather
-than drawn again, so they cannot drift apart.
+`social-preview.png` are derived from `logo.png` programmatically rather than
+drawn again, so they cannot drift apart.
+
+## The register
+
+Classical line engraving — a banknote portrait or a Wall Street Journal hedcut.
+All tone comes from hatching density, never from gradients, so the mark is
+genuinely monochrome and reproduces anywhere: one ink, one plate.
+
+This is a deliberate rejection of the flat geometric app-icon look. A friendly
+geometric mark would have been faster to make and impossible to remember, and
+the style is doing conceptual work here: engraving is the visual language of
+share certificates, seals and currency — of *provenance*, which is the thing
+this project is actually about.
+
+The load-bearing constraint is the **silhouette**. Interior hatching may be as
+fine as it likes, but the outer contour has to be strong and closed enough that
+the mark still reads at 32 pixels once that hatching blurs into solid tone.
+That is how banknote portraits work, and it is what lets one drawing serve both
+a README hero and a favicon.
 
 ## Palette
 
@@ -26,15 +44,14 @@ than drawn again, so they cannot drift apart.
 |---|---|---|
 | Ink | `#1A1A1A` | Near-black; softer than `#000` against a dark page |
 | Paper | `#F5F3EF` | Warm off-white, not clinical |
-| Accent | `#C8873A` | Amber, for docs and diagrams only — not in the mark |
+| Accent | `#C8873A` | Amber, for docs and diagrams only — never in the mark |
 
-The mark itself is a single solid colour. Restraint is what lets it work at
-16 pixels.
+The mark is one ink colour. Restraint is what lets it survive being shrunk.
 
 ## Rules
 
-- Flat only. No gradients, shadows, 3D, texture, brush strokes, or grain.
-- No frame, badge, or circle border around the mark.
+- Tone from line density only. No gradients, airbrush, soft shading, or blur.
+- No frame, oval border, guilloche, ribbon, or background pattern.
 - No text baked into any image. `social-preview.png` deliberately leaves its
   right side empty so typography can be set in real type.
 - Regenerating one file means regenerating `logo.png` and re-deriving the rest.
