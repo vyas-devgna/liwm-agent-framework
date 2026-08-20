@@ -313,10 +313,21 @@ class FileLock:
                 pass
             self._fd = None
         if self._owns_current_file():
-            try:
-                self.path.unlink()
-            except OSError:  # pragma: no cover - already gone
-                pass
+            deadline = time.monotonic() + min(2.0, self.timeout)
+            while True:
+                try:
+                    self.path.unlink()
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError as exc:
+                    # Windows scanners can briefly retain a handle after our
+                    # descriptor closes. Do not strand a live-owner lock.
+                    if time.monotonic() >= deadline:
+                        raise LockTimeout(
+                            "could not release owned lock %s" % self.path
+                        ) from exc
+                    time.sleep(self.poll)
 
     def __enter__(self):
         return self.acquire()

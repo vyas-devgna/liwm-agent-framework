@@ -398,6 +398,25 @@ class TestAcquireIsAlwaysBounded(LiwmTestCase):
         finally:
             lock.release()
 
+    def test_release_retries_a_transient_windows_style_unlink_failure(self):
+        from unittest import mock
+
+        path = self.home / "release.lock"
+        lock = FileLock(path, timeout=1.0, poll=0.01).acquire()
+        unlink = type(path).unlink
+        attempts = []
+
+        def flaky_unlink(candidate, *args, **kwargs):
+            if candidate == path and not attempts:
+                attempts.append(candidate)
+                raise PermissionError("scanner still holds the file")
+            return unlink(candidate, *args, **kwargs)
+
+        with mock.patch.object(type(path), "unlink", flaky_unlink):
+            lock.release()
+        self.assertFalse(path.exists())
+        self.assertEqual(len(attempts), 1)
+
 
 
 if __name__ == "__main__":
