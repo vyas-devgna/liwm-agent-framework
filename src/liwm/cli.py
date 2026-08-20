@@ -1639,6 +1639,39 @@ def cmd_rules(args):
         changed = si.revert(args.id, store=store, reason=args.reason or "user requested")
         return _emit(args, {"reverted": changed},
                      text="reverted" if changed else "no active rule with that id")
+
+    from .experiments import EXPERIMENT_MODES, ExperimentStore
+    experiments = ExperimentStore(store.home)
+    if args.action == "experiments":
+        data = experiments.load()
+        lines = ["%d experiment(s)" % len(data["experiments"])]
+        for row in data["experiments"]:
+            lines.append("  %-8s %-7s exposure %.2f  %s  %s"
+                         % (row["state"], row["mode"], row["exposure"],
+                            row["candidate_id"][:16],
+                            EXPERIMENT_MODES[row["mode"]]["note"]))
+        return _emit(args, data, text="\n".join(lines))
+
+    if args.action == "enroll":
+        row = experiments.enroll(args.id, args.experiment_mode, store=store,
+                                 exposure=args.exposure, seed=args.seed)
+        return _emit(args, row, text="enrolled %s as a %s experiment (%s)"
+                     % (args.id, row["mode"], EXPERIMENT_MODES[row["mode"]]["note"]))
+
+    if args.action == "assign":
+        if not args.unit:
+            raise ValueError("rules assign requires --unit")
+        assignment = experiments.assign(args.id, args.unit, store=store,
+                                        session_id=args.session, project_id=args.project,
+                                        domain=args.domain)
+        return _emit(args, assignment, text="%s -> %s (%s)"
+                     % (args.unit, assignment["condition"], assignment["exposure"]))
+
+    if args.action == "stop":
+        stopped = experiments.stop(args.id, store=store,
+                                   reason=args.reason or "user requested")
+        return _emit(args, {"stopped": stopped},
+                     text="stopped" if stopped else "no running experiment for that id")
     return EXIT_USAGE
 
 
@@ -1869,7 +1902,7 @@ def build_parser():
     s.add_argument("--domain")
     s.add_argument("--project")
     s.add_argument("--task")
-    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "silent", "off"])
     s.add_argument("--signals", help="JSON object of AUTO signals")
     s.add_argument("--stage")
     s.add_argument("--write", action="store_true", help="also write runtime_context.json")
@@ -1970,7 +2003,7 @@ def build_parser():
     s.set_defaults(func=cmd_feedback)
 
     s = sub.add_parser("mode", help="resolve the operating mode")
-    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "silent", "off"])
     s.add_argument("--signals")
     s.add_argument("--stage")
     for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
@@ -1979,7 +2012,7 @@ def build_parser():
     s.set_defaults(func=cmd_mode)
 
     s = sub.add_parser("plan", help="plan which questions are worth asking")
-    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "off"])
+    s.add_argument("--mode", default="auto", choices=["auto", "low", "medium", "high", "silent", "off"])
     s.add_argument("--domain")
     s.add_argument("--project")
     s.add_argument("--risk", type=float, default=0.5, help="misunderstanding risk 0-1")
@@ -2217,11 +2250,23 @@ def build_parser():
     s.set_defaults(func=cmd_migrate)
 
     s = sub.add_parser("rules", help="inspect and gate self-improvement candidates")
-    s.add_argument("action", choices=["list", "replay", "promote", "revert"])
+    s.add_argument("action", choices=["list", "replay", "promote", "revert",
+                                      "experiments", "enroll", "assign", "stop"])
     s.add_argument("--id")
     s.add_argument("--state")
     s.add_argument("--reason")
     s.add_argument("--include-rejected", action="store_true")
+    s.add_argument("--experiment-mode", dest="experiment_mode", default="shadow",
+                   choices=["shadow", "canary", "ab"],
+                   help="shadow computes without shipping; canary and ab put the "
+                        "candidate in front of the user and need consent")
+    s.add_argument("--exposure", type=float, default=0.1,
+                   help="fraction of eligible interactions for a user-facing arm")
+    s.add_argument("--seed", help="fix the assignment seed for a registered design")
+    s.add_argument("--unit", help="interaction id to assign, committed before output")
+    s.add_argument("--session")
+    s.add_argument("--project")
+    s.add_argument("--domain")
     s.set_defaults(func=cmd_rules)
 
     s = sub.add_parser("retro", help="run a session retrospective")

@@ -27,7 +27,7 @@ _MEASUREMENT_KEYS = frozenset({
     "utility", "changed_plan", "questions_asked", "questions_answered",
     "questions_skipped", "questions_useful", "questions_wasted", "corrections",
 })
-_MODES = frozenset({"auto", "low", "medium", "high", "off"})
+_MODES = frozenset({"auto", "low", "medium", "high", "silent", "off"})
 _CONDITIONS = frozenset({"A", "B", "C", "D", "E", "F"})
 _TASK_TYPES = frozenset({
     "preference_prediction", "cross_domain_transfer", "question_selection",

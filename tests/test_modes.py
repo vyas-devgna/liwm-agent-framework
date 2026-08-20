@@ -177,3 +177,30 @@ class TestFatigue(LiwmTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SilentIsNotOff(LiwmTestCase):
+    """Condition E needs an ablation that removes only the asking.
+
+    `liwm mode off` disables profile consultation, learning and questions at
+    once, so a study using it as the no-elicitation arm changes three things
+    and attributes all of them to elicitation.
+    """
+
+    def test_silent_keeps_the_profile_and_the_learning(self):
+        silent = mode_profile("silent")
+        off = mode_profile("off")
+        self.assertEqual(silent["max_questions"], off["max_questions"], 0)
+        self.assertTrue(silent["use_profile"])
+        self.assertTrue(silent["record_evidence"])
+        self.assertFalse(off["use_profile"])
+        self.assertFalse(off["record_evidence"])
+
+    def test_silent_asks_nothing_however_uncertain_the_profile_is(self):
+        planner = QuestionPlanner(mode_profile("silent"), resolved={})
+        self.assertEqual(planner.plan(), [])
+        self.assertIsNone(planner.next_question())
+
+    def test_the_summary_says_which_condition_it_is(self):
+        self.assertIn("condition", mode_profile("silent")["summary"].lower())
+        self.assertIn("not the same thing as OFF", mode_profile("silent")["summary"])

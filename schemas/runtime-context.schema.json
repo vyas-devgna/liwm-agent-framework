@@ -78,6 +78,7 @@
       "properties": {
         "effective": {
           "enum": [
+            "silent",
             "off",
             "low",
             "medium",
@@ -86,6 +87,7 @@
         },
         "requested": {
           "enum": [
+            "silent",
             "off",
             "low",
             "medium",

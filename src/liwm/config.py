@@ -23,6 +23,9 @@ DEFAULT_CONFIG = {
         "redact_exports_by_default": False,
     },
     "questioning": {"max_questions_per_session": 12, "never_ask_about": []},
+    # Off. LIWM does not change how it behaves toward someone in order to
+    # gather evidence about itself unless that person has said it may.
+    "learning": {"experiments_enabled": False},
     "retention": {"backup_count": 60},
     "study": {"enabled": False, "retention_days": 90,
               "enabled_at": None, "start_sequence": None},
@@ -82,6 +85,7 @@ class ConfigStore:
             "questioning.max_questions_per_session", "questioning.never_ask_about",
             "retention.backup_count",
             "study.enabled", "study.retention_days",
+            "learning.experiments_enabled",
         }
         if key not in allowed:
             raise ValueError("unsupported config key %r" % key)
@@ -97,6 +101,8 @@ class ConfigStore:
         if key in {"retention.backup_count"} \
                 and (not isinstance(value, int) or value < 1):
             raise ValueError("%s must be a positive integer" % key)
+        if key == "learning.experiments_enabled" and not isinstance(value, bool):
+            raise ValueError("learning.experiments_enabled must be true or false")
         if key == "study.enabled" and not isinstance(value, bool):
             raise ValueError("study.enabled must be true or false")
         if key == "study.retention_days" \

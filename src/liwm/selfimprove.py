@@ -81,6 +81,11 @@ PROMOTION_GATES = {
     # occasions, which is also what stops a single unusually agreeable session
     # from carrying a candidate through.
     "min_outcome_sessions": 3,
+    # ...and those outcomes must come from interactions where the candidate
+    # actually produced what the user reacted to.  Replay is a model, shadow
+    # evaluation is a model with better manners, and neither is a person
+    # responding to the candidate's work.  See :mod:`liwm.experiments`.
+    "require_user_facing_exposure": True,
 }
 
 
@@ -317,12 +322,17 @@ class SelfImprovementStore:
         # record in LIWM of a commitment made before the user reacted.
         required_outcomes = int(gates.get("min_resolved_outcomes", 0) or 0)
         resolved_outcomes = None
+        exposure = None
         if required_outcomes:
             if store is None:
                 passed = False
                 reasons.append("observed-outcome gate could not be evaluated: "
                                "no profile store supplied")
             else:
+                if gates.get("require_user_facing_exposure", True):
+                    from .experiments import ExperimentStore
+                    exposure = ExperimentStore(store.home).exposure_for(
+                        store, candidate.get("id"))
                 observed = {}
                 sessions = set()
                 for event in store.events.iter_events(kinds={"outcome"}):
@@ -339,6 +349,8 @@ class SelfImprovementStore:
                             and payload.get("prediction_id")
                             and parse_ts(event.get("ts"))
                             >= parse_ts(candidate.get("created_at"))):
+                        if exposure is not None and payload.get("unit") not in exposure:
+                            continue
                         observed[payload["prediction_id"]] = payload
                         sessions.add(event.get("session_id"))
                 resolved_outcomes = len(observed)
@@ -346,8 +358,9 @@ class SelfImprovementStore:
                 if resolved_outcomes < required_outcomes:
                     passed = False
                     reasons.append(
-                        "only %d evidence-bound outcome(s) behind this; need %d, or the "
-                        "evidence is replay scoring itself"
+                        "only %d evidence-bound outcome(s) from interactions where the "
+                        "candidate produced the work; need %d. Replay and shadow "
+                        "evaluation do not count: nobody reacted to the candidate."
                         % (resolved_outcomes, required_outcomes))
                 elif len({s for s in sessions if s}) < required_sessions:
                     passed = False
@@ -383,6 +396,7 @@ class SelfImprovementStore:
             "reasons": reasons,
             "episodes": episodes,
             "resolved_outcomes": resolved_outcomes,
+            "user_facing_units": None if exposure is None else len(exposure),
             "primary_delta": primary,
             "regressions": regressions,
             "gates": gates,

@@ -42,6 +42,7 @@ def make_prediction(
     basis=None,
     artifact=None,
     candidate_id=None,
+    unit=None,
 ):
     """Build a structured prediction about how an artifact will land."""
     return {
@@ -49,6 +50,10 @@ def make_prediction(
         "at": utc_now(),
         "artifact": artifact,
         "candidate_id": candidate_id,
+        # The interaction this prediction belongs to, matching the unit an
+        # experiment assignment was committed for. Without it an outcome cannot
+        # be tied back to whether the user actually saw candidate output.
+        "unit": unit,
         "target_type": "binary_first_pass_acceptance",
         "predicted_acceptance": _unit_interval(predicted_acceptance, "predicted_acceptance"),
         "confidence": _unit_interval(confidence, "confidence"),
@@ -179,6 +184,7 @@ def resolve_prediction(store, prediction_id, actual_acceptance=None, observed_fr
             else "agent_inference"
         ),
         "candidate_id": prediction.get("candidate_id"),
+        "unit": prediction.get("unit"),
         "evidence_event_id": evidence_event_id,
         # Absent on every 0.2 outcome, which is the point: an observed label
         # recorded before this rule existed was never checked against its

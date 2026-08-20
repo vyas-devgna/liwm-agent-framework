@@ -6,20 +6,34 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
-    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
     "enabled": {
       "type": "boolean",
       "default": true,
       "description": "Master switch. `LIWM off` sets this to false; nothing is consulted or learned while it is false."
     },
     "default_mode": {
-      "enum": ["auto", "low", "medium", "high", "off"],
+      "enum": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "silent",
+        "off"
+      ],
       "default": "auto"
     },
-    "learning_enabled": { "type": "boolean", "default": true },
-    "onboarding_offered": { "type": "boolean", "default": false },
-
+    "learning_enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "onboarding_offered": {
+      "type": "boolean",
+      "default": false
+    },
     "privacy": {
       "type": "object",
       "properties": {
@@ -32,73 +46,145 @@
           "default": false,
           "description": "When false, quotes and notes are omitted from events; only structured observations are kept."
         },
-        "redact_exports_by_default": { "type": "boolean", "default": false }
+        "redact_exports_by_default": {
+          "type": "boolean",
+          "default": false
+        }
       },
       "additionalProperties": true
     },
-
     "promotion_policy": {
       "type": "object",
       "description": "Overrides for liwm.scope.PromotionPolicy. Stricter values are always safe.",
       "properties": {
-        "min_projects_for_domain": { "type": "integer", "minimum": 2 },
-        "min_domains_for_global": { "type": "integer", "minimum": 2 },
-        "min_sessions_for_domain": { "type": "integer", "minimum": 1 },
-        "min_sessions_for_global": { "type": "integer", "minimum": 2 },
-        "min_source_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "domain_discount": { "type": "number", "minimum": 0, "maximum": 1 },
-        "global_discount": { "type": "number", "minimum": 0, "maximum": 1 }
+        "min_projects_for_domain": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "min_domains_for_global": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "min_sessions_for_domain": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_sessions_for_global": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "min_source_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "domain_discount": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "global_discount": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       },
       "additionalProperties": true
     },
-
     "questioning": {
       "type": "object",
       "properties": {
-        "max_questions_per_session": { "type": "integer", "minimum": 0, "maximum": 30 },
+        "max_questions_per_session": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30
+        },
         "never_ask_about": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Dimensions the user does not want probed, ever."
         }
       },
       "additionalProperties": true
     },
-
     "retention": {
       "type": "object",
       "properties": {
-        "backup_count": { "type": "integer", "minimum": 1, "default": 60 }
+        "backup_count": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        }
       },
       "additionalProperties": true
     },
-
     "study": {
       "type": "object",
       "description": "Opt-in local research view. LIWM never uploads study data.",
       "properties": {
-        "enabled": { "type": "boolean", "default": false },
-        "retention_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90 },
-        "enabled_at": { "type": ["string", "null"] },
-        "start_sequence": { "type": ["integer", "null"], "minimum": 0 }
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "default": 90
+        },
+        "enabled_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start_sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
       },
       "additionalProperties": true
     },
-
     "hosts": {
       "type": "object",
       "description": "Recorded by the installer so update/uninstall know what was touched.",
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "installed": { "type": "boolean" },
-          "skills_path": { "type": "string" },
-          "bootstrap_file": { "type": "string" },
-          "installed_at": { "type": "string" },
-          "liwm_version": { "type": "string" }
+          "installed": {
+            "type": "boolean"
+          },
+          "skills_path": {
+            "type": "string"
+          },
+          "bootstrap_file": {
+            "type": "string"
+          },
+          "installed_at": {
+            "type": "string"
+          },
+          "liwm_version": {
+            "type": "string"
+          }
         },
         "additionalProperties": true
       }
+    },
+    "learning": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "experiments_enabled": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "description": "Whether LIWM may evaluate its own candidate rules against your work."
     }
   }
 }
