@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "liwm"
-version = "0.1.0"
+version = "0.2.0"
 description = "LIWM - Latent Intent World Model: a persistent, evidence-based intent-learning layer for coding agents."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Vyas Devgna" }]
 keywords = [
   "agent", "claude-code", "codex", "intent", "personalization",
@@ -17,7 +18,6 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
@@ -28,7 +28,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 # Zero runtime dependencies is a hard design constraint: LIWM must run wherever
-# the host agent runs, with no install step beyond copying files.
+# the host agent runs without adding a dependency stack.
 dependencies = []
 
 [project.optional-dependencies]
@@ -49,8 +49,27 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-liwm = ["schemas/*.json"]
-
 [tool.setuptools.data-files]
 "share/liwm/schemas" = ["schemas/*.json"]
+"share/liwm" = ["INSTALL_PROMPT.md", "UPDATE_PROMPT.md", "UNINSTALL_PROMPT.md"]
+"share/liwm/adapters/blocks" = ["adapters/blocks/*.md"]
+"share/liwm/adapters/claude-code" = ["adapters/claude-code/*.md"]
+"share/liwm/adapters/codex" = ["adapters/codex/*.md"]
+"share/liwm/adapters/generic-agent" = ["adapters/generic-agent/*.md"]
+"share/liwm/skills/liwm" = ["skills/liwm/SKILL.md"]
+"share/liwm/skills/liwm/references" = ["skills/liwm/references/*.md"]
+"share/liwm/skills/liwm-counterfactual" = ["skills/liwm-counterfactual/SKILL.md"]
+"share/liwm/skills/liwm-evaluation" = ["skills/liwm-evaluation/SKILL.md"]
+"share/liwm/skills/liwm-feedback" = ["skills/liwm-feedback/SKILL.md"]
+"share/liwm/skills/liwm-intent-discovery" = ["skills/liwm-intent-discovery/SKILL.md"]
+"share/liwm/skills/liwm-learning" = ["skills/liwm-learning/SKILL.md"]
+"share/liwm/skills/liwm-onboarding" = ["skills/liwm-onboarding/SKILL.md"]
+"share/liwm/skills/liwm-privacy" = ["skills/liwm-privacy/SKILL.md"]
+"share/liwm/skills/liwm-profile" = ["skills/liwm-profile/SKILL.md"]
+"share/liwm/skills/liwm-profile-maintenance" = ["skills/liwm-profile-maintenance/SKILL.md"]
+"share/liwm/skills/liwm-project-intent" = ["skills/liwm-project-intent/SKILL.md"]
+"share/liwm/skills/liwm-question-planner" = ["skills/liwm-question-planner/SKILL.md"]
+"share/liwm/skills/liwm-retrospective" = ["skills/liwm-retrospective/SKILL.md"]
+"share/liwm/skills/liwm-self-improvement" = ["skills/liwm-self-improvement/SKILL.md"]
+"share/liwm/skills/liwm-traceability" = ["skills/liwm-traceability/SKILL.md"]
+"share/liwm/benchmarks/intentbench/cases" = ["benchmarks/intentbench/cases/*.json"]

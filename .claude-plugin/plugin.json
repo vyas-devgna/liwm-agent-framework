@@ -1,6 +1,6 @@
 {
   "name": "liwm-agent-framework",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first, evidence-backed intent learning for agent collaboration.",
   "author": {
     "name": "Vyas Devgna",

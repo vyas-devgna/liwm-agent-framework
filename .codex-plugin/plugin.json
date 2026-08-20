@@ -1,6 +1,6 @@
 {
   "name": "liwm-agent-framework",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first, evidence-backed intent learning for agent collaboration.",
   "author": {
     "name": "Vyas Devgna",
@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "LIWM Agent Framework",
     "shortDescription": "Evidence-backed intent learning for agents",
-    "longDescription": "A local-first cognitive interface layer that helps compatible agents learn a user's working preferences without profiling sensitive traits or contaminating global state with project instructions.",
+    "longDescription": "A local-first intent layer whose guarded APIs refuse known sensitive dimensions and keep project-scoped evidence separate from global preferences.",
     "developerName": "Vyas Devgna",
     "category": "Productivity",
     "capabilities": ["Local-first", "Agent Skills", "Intent learning"],
