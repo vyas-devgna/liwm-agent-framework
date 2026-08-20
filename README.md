@@ -35,11 +35,6 @@ paragraph is a fine way to hold an instruction and a poor way to hold a claim
 about a person, because there is nowhere in it to put the things that make such
 a claim checkable.
 
-<div align="center">
-  <img src="assets/thesis.png" width="620" alt="Two panels. Left: an elephant reads a document wide-eyed and copies it straight into an open notebook. Right: the same elephant holds the document at arm's length, notebook shut under one foot.">
-  <br>
-  <sub><i>The difference is not whether it remembers. It is what gets written down.</i></sub>
-</div>
 
 | | Markdown agent memory | LIWM |
 |---|---|---|
@@ -524,8 +519,8 @@ MIT. See [LICENSE](LICENSE).
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.png">
-    <img src="assets/mark.png" width="56" alt="">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo.png" width="52" alt="">
   </picture>
 </div>
 

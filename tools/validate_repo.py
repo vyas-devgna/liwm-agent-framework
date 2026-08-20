@@ -133,8 +133,7 @@ def main():
     # broken image on the front page of the project, so it fails the build
     # rather than waiting for somebody to notice.
     expected_assets = {
-        "logo.png", "logo-dark.png", "mark.png", "mark-dark.png",
-        "favicon.png", "social-preview.png", "thesis.png",
+        "logo.png", "logo-dark.png", "favicon.png", "social-preview.png",
     }
     present = {p.name for p in (ROOT / "assets").glob("*.png")}
     missing = sorted(expected_assets - present)

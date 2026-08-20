@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../assets/mark-dark.png">
-  <img src="../assets/mark.png" width="72" alt="LIWM">
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/logo-dark.png">
+  <img src="../assets/logo.png" width="72" alt="LIWM">
 </picture>
 
 # LIWM documentation
