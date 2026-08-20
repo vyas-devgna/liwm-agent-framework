@@ -9,6 +9,7 @@ construction rather than by luck.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import unittest
 
@@ -178,6 +179,73 @@ class TestRecovery(LiwmTestCase):
         leftovers = [p for p in self.home.iterdir() if p.name.endswith(".tmp")]
         self.assertEqual(leftovers, [])
         self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"a": 1})
+
+
+
+class TestLivenessProbeIsNeverDestructive(LiwmTestCase):
+    """A lock probe must never be able to kill the process it is probing.
+
+    On Windows ``os.kill`` maps every signal but CTRL_C_EVENT and
+    CTRL_BREAK_EVENT onto ``TerminateProcess``. Because a lock file records the
+    pid of whoever took it, the POSIX ``os.kill(pid, 0)`` idiom running there
+    would have a second thread terminate its own agent mid-write. These tests
+    fail on any platform if that idiom is ever reintroduced unguarded.
+    """
+
+    def test_os_kill_is_not_reachable_off_posix(self):
+        import os as os_module
+        from unittest import mock
+
+        from liwm.jsonio import FileLock
+
+        lock = FileLock(self.home / "probe.lock")
+        with mock.patch.object(os_module, "name", "nt"), \
+                mock.patch.object(os_module, "kill") as killer, \
+                mock.patch.object(FileLock, "_windows_owner_is_alive",
+                                  staticmethod(lambda pid: True)):
+            self.assertTrue(lock._owner_is_alive(os_module.getpid()))
+        killer.assert_not_called()
+
+    def test_an_unknown_platform_declines_to_guess(self):
+        import os as os_module
+        from unittest import mock
+
+        from liwm.jsonio import FileLock
+
+        lock = FileLock(self.home / "probe.lock")
+        with mock.patch.object(os_module, "name", "java"), \
+                mock.patch.object(os_module, "kill") as killer:
+            self.assertIsNone(lock._owner_is_alive(os_module.getpid()),
+                              "no answer is better than a wrong one")
+        killer.assert_not_called()
+
+    def test_an_unknown_platform_falls_back_to_the_age_heuristic(self):
+        """Without a probe, only a genuinely old lock may be reclaimed."""
+        import os as os_module
+        from unittest import mock
+
+        from liwm.jsonio import FileLock, LockTimeout
+
+        path = self.home / "fallback.lock"
+        held = FileLock(path, timeout=0.2, stale_after=999).acquire()
+        try:
+            with mock.patch.object(os_module, "name", "java"):
+                with self.assertRaises(LockTimeout):
+                    FileLock(path, timeout=0.2, stale_after=999).acquire()
+                # Same lock, now old enough to be considered abandoned.
+                FileLock(path, timeout=0.2, stale_after=0.0).acquire().release()
+        finally:
+            held.release()
+
+    def test_a_live_owner_is_reported_alive_on_this_platform(self):
+        from liwm.jsonio import FileLock
+
+        lock = FileLock(self.home / "probe.lock")
+        alive = lock._owner_is_alive(os.getpid())
+        self.assertIn(alive, (True, None))
+        self.assertNotEqual(alive, False,
+                            "this process is demonstrably running")
+
 
 
 if __name__ == "__main__":

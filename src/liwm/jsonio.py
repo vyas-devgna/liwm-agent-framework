@@ -168,6 +168,61 @@ class FileLock:
             "token": self._token,
         }
 
+    def _owner_is_alive(self, pid):
+        """Is *pid* still running?  ``None`` when the platform cannot say.
+
+        Liveness is what separates "the owner crashed, take the lock" from
+        "the owner is mid-write, wait", so getting it wrong either wedges the
+        profile or corrupts it.
+
+        The POSIX idiom ``os.kill(pid, 0)`` must never run on Windows.  There,
+        ``os.kill`` maps every signal other than ``CTRL_C_EVENT`` and
+        ``CTRL_BREAK_EVENT`` onto ``TerminateProcess`` -- so "probing" a pid
+        kills it, and since a lock records the pid of whoever took it, a second
+        thread in the same process would terminate its own agent.  Windows
+        therefore gets a real, non-destructive probe via ``OpenProcess`` plus
+        ``GetExitCodeProcess``; the exit-code check matters because a handle can
+        outlive the process it refers to.
+        """
+        if os.name == "posix":
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except (OSError, PermissionError):
+                # A live process owned by another user: not ours to reclaim.
+                return True
+        if os.name == "nt":
+            return self._windows_owner_is_alive(pid)
+        return None
+
+    @staticmethod
+    def _windows_owner_is_alive(pid):  # pragma: no cover - exercised on Windows CI
+        try:
+            import ctypes
+            from ctypes import wintypes
+        except ImportError:
+            return None
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        ERROR_ACCESS_DENIED = 5
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # Access denied means the process exists but belongs to someone
+            # else, which is emphatically not a lock we may break.
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return None
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+
     def _is_stale(self) -> bool:
         try:
             raw = self.path.read_text(encoding="utf-8")
@@ -176,13 +231,9 @@ class FileLock:
             if info.get("host") == socket.gethostname():
                 pid = int(info.get("pid", -1))
                 if pid > 0:
-                    try:
-                        os.kill(pid, 0)
-                        return False
-                    except ProcessLookupError:
-                        return True
-                    except (OSError, PermissionError):
-                        return False
+                    alive = self._owner_is_alive(pid)
+                    if alive is not None:
+                        return not alive
         except (OSError, ValueError, TypeError):
             # Unreadable lock file: fall back to mtime, then treat as stale.
             try:

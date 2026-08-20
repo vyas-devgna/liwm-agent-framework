@@ -36,8 +36,11 @@ Released after an over-engineering audit. Cuts made before shipping: an unused
 `append_jsonl` helper, an unused `INTERACTION_META_DIMENSIONS` constant, an
 empty `dict` subclass, a `None` alias, a single-caller path resolver, a
 duplicated `_clamp`, all-false capability boilerplate, and a
-`retention.episode_retention_days` setting that nothing read. Two bugs the audit
-surfaced were fixed rather than documented: a user override of a host's
+`retention.episode_retention_days` setting that nothing read. Three bugs found before release were fixed rather than documented: on Windows,
+the POSIX `os.kill(pid, 0)` liveness idiom maps onto `TerminateProcess`, so a
+second thread probing a lock would have terminated its own agent -- Windows now
+uses a non-destructive `OpenProcess`/`GetExitCodeProcess` probe. The audit
+surfaced the other two: a user override of a host's
 instruction file was silently ignored in favour of the built-in path, and the
 Codex skills directory resolved to `$CODEX_HOME/skills` instead of the
 cross-vendor `~/.agents/skills`. Episode pruning is on the roadmap rather than a
