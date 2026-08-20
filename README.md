@@ -223,7 +223,7 @@ than assumed:
 
 ```console
 $ liwm doctor
-LIWM 0.2.0  home=/home/you/.liwm
+LIWM 0.3.0  home=/home/you/.liwm
   [ok] home_exists
   [ok] home_outside_git
   [ok] event_integrity_ok
@@ -442,7 +442,7 @@ The defensible claim is that normal, compliant framework use is guarded. LIWM
 cannot protect against a process with equivalent filesystem authority
 deliberately rewriting the framework, events or host configuration, and such a
 process can also replace the hashes. Making that stronger needs an independent
-trusted boundary, which is [on the roadmap](ROADMAP.md) and not in 0.2.0.
+trusted boundary, which is [on the roadmap](ROADMAP.md) and not in 0.3.0.
 
 ```python
 from liwm import open_home
@@ -457,11 +457,23 @@ The honest answer: **the safety and persistence invariants are covered by tests;
 the effectiveness numbers are simulation, and labelled as such.**
 
 ```bash
-python tests/run_tests.py -v     # dependency-free test suite
+python tests/run_tests.py -v     # 433 tests, no dependencies
 python -m liwm eval modes
 python -m liwm eval converge --archetype impatient_technical_expert --rounds 10
-python -m liwm eval intentbench
+python -m liwm eval intentbench --suite mechanism --adapter liwm
 ```
+
+The mechanism suite is the one worth running. Seventeen cases build a real
+LIWM home out of typed evidence and check that a project preference does not
+leak, that repository content and laundered inferences cannot set a belief,
+that a tombstone drops the right evidence and only that, that a preference
+learned in three domains reaches a fourth, and that no evidence produces no
+opinion rather than a confident guess. LIWM passes all seventeen; a
+fixed-choice baseline scores 0.29, and a test asserts that gap so the suite
+cannot quietly become one everything passes.
+
+It is still synthetic. A pass means the implementation matches the
+specification, not that the specification helps anyone.
 
 Over ten simulated rounds with an impatient expert, belief accuracy rises
 0.21 → 1.00, synthetic observed acceptance 0.36 → 1.00, and questions asked fall
@@ -506,10 +518,13 @@ reports, and asserts the profile is unchanged.
 
 **[Full documentation index →](docs/README.md)**
 
-> **Status: 0.2.0 alpha.** The invariants are tested and the API is stable enough
-> to build on, but the effectiveness claims need longitudinal study with real
-> people. If you run one, [docs/RESEARCH.md](docs/RESEARCH.md) has the protocol
-> and the instrumentation, and the maintainers would like to hear from you.
+> **Status: 0.3.0 alpha.** The invariants are tested — 433 tests, a mechanism
+> benchmark that can fail, and a lint and coverage gate — and the API is stable
+> enough to build on. The effectiveness claim is not tested at all, because
+> that needs real people. Nobody has run the study yet.
+> [docs/RESEARCH.md](docs/RESEARCH.md) has the protocol, the instrumentation,
+> and a 20–40 person alpha designed to falsify the thesis cheaply. If you run
+> one, the maintainers would like to hear from you, including if it fails.
 
 ### About the name
 
@@ -519,17 +534,23 @@ latent representation of a person, no generative response/state transition such
 as `P(R_t, I_{t+1} | I_t, A_t, C_t)`, no neural state-space model, and no
 counterfactual simulator grounded in real human trajectories.
 
-What 0.2.0 actually is, stated plainly:
+What 0.3.0 actually is, stated plainly:
 
 > an evidence-sourced, uncertainty-aware persistent user model with active
 > intent elicitation and an adaptive questioning policy.
 
+The graph is likewise a typed provenance graph with a small amount of state
+logic, not a dynamic inference engine: four edge types change an element's
+status, the rest describe relationships and are inert by design.
+
 The scoring is transparent arithmetic over typed evidence — noisy-OR, ceilings,
 decay, scope — chosen because it is inspectable and falsifiable, not because it
-is the most expressive thing available. The prediction loop
+is the most expressive thing available. It is also the baseline any learned
+model has to beat on held-out real data before it becomes the default, which is
+the opposite of treating it as technical debt. The prediction loop
 (`liwm predict` → `liwm resolve` → `liwm stats`) exists so that a later learned
 model has something to beat. Treat the name as the destination on the roadmap,
-and judge 0.2.0 on the paragraph above.
+and judge 0.3.0 on the paragraph above.
 
 ## License
 
@@ -542,7 +563,7 @@ MIT. See [LICENSE](LICENSE).
   </picture>
 </div>
 
-Host documentation rechecked for 0.2.0: [Claude Code skills](https://code.claude.com/docs/en/skills)
+Host documentation rechecked for 0.3.0: [Claude Code skills](https://code.claude.com/docs/en/skills)
 · [memory](https://code.claude.com/docs/en/memory)
 · [plugins](https://code.claude.com/docs/en/plugins)
 · [Codex skills](https://developers.openai.com/codex/skills)

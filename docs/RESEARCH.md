@@ -8,12 +8,15 @@ outcomes. None establishes that LIWM improves work with real people.
 
 | Evidence | Current status | What it supports |
 |---|---|---|
-| Unit and adversarial tests | implemented | documented behavior within the threat model |
+| Unit, property and adversarial tests | implemented | documented behavior within the threat model |
 | `liwm eval modes` and `converge` | synthetic mechanism checks | planner distinction and a closed learning loop |
-| `liwm eval intentbench` | synthetic scorer-contract smoke | adapter isolation and probability-scoring plumbing only |
+| `liwm eval intentbench --suite smoke` | synthetic scorer-contract smoke | runner and probability-scoring plumbing only |
+| `liwm eval intentbench --suite mechanism` | synthetic mechanism result | scope isolation, poisoning resistance, forgetting, transfer and calibration behave as specified |
 | Counterfactual replay | modelled estimate | whether a policy merits prospective testing |
-| Resolved predictions | agent-recorded outcomes | calibration only to the extent labels are valid |
-| Controlled human study | not yet run | prospective preference, burden, and transfer effects |
+| Shadow evaluation | modelled estimate | what a candidate would have done; no human was exposed |
+| Outcomes without `outcome_binding` | agent-recorded, unverified | nothing independent; retained for audit only |
+| Outcomes with `outcome_binding` | evidence-bound human outcome | calibration, and promotion when the user was exposed to the candidate |
+| Controlled human study | **not yet run** | prospective preference, burden, and transfer effects |
 
 Every published number must carry its evidence label. Synthetic and replay
 results must never be presented as observed human effectiveness.
@@ -46,10 +49,11 @@ Where host capabilities permit, compare:
 | E | LIWM profile and learning with elicitation disabled |
 | F | full LIWM |
 
-Condition E needs a real no-question ablation. `liwm mode off` is not that
-ablation because OFF also disables profile consultation and learning. If the
-host has no native memory, mark C unavailable rather than substituting it after
-seeing results.
+Condition E is `liwm mode silent`: profile consultation and learning stay on,
+elicitation is off. `liwm mode off` is not that ablation, because OFF disables
+all three and would attribute the effect of three changes to elicitation alone.
+If the host has no native memory, mark C unavailable rather than substituting
+it after seeing results.
 
 ## Operational definitions
 
@@ -94,16 +98,97 @@ liwm eval intentbench --json
 liwm eval intentbench --adapter static-first --json
 ```
 
-The shipped cases are `synthetic_scorer_contract_smoke`. Their default adapter
-replays participant-visible fixture scores, so they validate only case loading,
-adapter isolation, and probability scoring. They do not exercise LIWM learning,
-held-out transfer, question selection, traceability, scope filtering, or
-poisoning resistance and are not publication-ready results.
+The `smoke` suite is `synthetic_scorer_contract_smoke`: its adapter replays
+participant-visible fixture scores, so it validates case loading, adapter
+isolation and probability scoring and nothing else.
 
-A benchmark run manifest should record dataset kind, seed, code revision,
-host/model/version, adapter, timestamp, and exact metric definitions. For
-held-out transfer, learn only from A/B/C, commit D-domain probabilities before
-any D-specific elicitation, then compare conditions on the same D tasks.
+The `mechanism` suite runs a real, throwaway LIWM home built from each case's
+typed evidence, so the fold, provenance gate, scope lattice and tombstone logic
+answer for themselves. Seventeen cases across five families. Real LIWM passes
+all seventeen; the fixed-choice baseline scores 0.29 with a log loss of 22.3,
+and a test asserts that gap so the suite cannot degrade into one every adapter
+passes. Cases asserting the absence of an opinion are scored on departure from
+uniform rather than on top-1, because a confident guess from no evidence is the
+failure the case exists to catch.
+
+Neither suite is human evidence. A mechanism pass says LIWM does what it says
+it does, not that doing so helps anyone.
+
+Every run returns a manifest recording suite, dataset kind, adapter, case
+count, LIWM version, code revision, Python and platform, determinism, whether
+hidden labels were exposed, and the exact definition of each metric.
+
+## Belief confidence is not prediction probability
+
+Three quantities in LIWM are easy to conflate and mean different things:
+
+- **Belief confidence** — an evidence-strength heuristic on [0, 1], computed by
+  noisy-OR over weighted observations and clamped to a per-source ceiling. It
+  is not a calibrated probability and is not claimed to be one.
+- **Prediction probability** — a forecast committed before an outcome, scored
+  by Brier and log loss. This one is meant to be calibrated, and `liwm
+  calibration` is where you find out whether it is.
+- **Prediction confidence** — meta-confidence in that forecast. It is not a
+  second probability of the same event.
+
+A prediction may be labelled `locally_calibrated_candidate` only when it was
+built from a recorded basis. It should not be described as *calibrated* in a
+write-up until reliability bins over at least 30 evidence-bound outcomes support
+the claim; `liwm stats` reports `expected_calibration_error_reliable` for
+exactly this reason.
+
+## Cross-domain transfer is the flagship measurement
+
+H3 is the hypothesis that separates LIWM from a better notes file. The protocol
+is fixed and the contamination rule is not negotiable:
+
+1. assign held-out domain D before any collection;
+2. learn only in A, B and C;
+3. freeze the profile;
+4. commit D-domain preference probabilities *before* any D-specific question,
+   observation or output is shown;
+5. only then reveal the D outcome and score it.
+
+If D-specific evidence exists in the log before the prediction, the trial is
+invalid. Mark it invalid and report the count. Do not quietly include it,
+and do not decide after seeing the results which trials were contaminated.
+
+Compare against every baseline on the same D tasks, not against LIWM's own
+earlier self.
+
+## How a candidate rule earns human evidence
+
+Replay scores a candidate against an acceptance model LIWM wrote, so a
+candidate can win by fitting the evaluator rather than the person. Promotion
+therefore requires outcomes from interactions where the candidate produced the
+work. `liwm.experiments` provides three modes:
+
+| Mode | User-facing | Counts toward promotion |
+|---|---|---|
+| `shadow` | no | no — nobody was exposed to anything |
+| `canary` | a registered fraction, capped at 0.25 | yes |
+| `ab` | registered random assignment | yes |
+
+Assignment is `sha256(seed, experiment, unit)`, committed as an event before
+the output exists, so it cannot be re-rolled or chosen after seeing how things
+went. All three require explicit opt-in via `learning.experiments_enabled`.
+A study that changes participant-facing behaviour must say so in its consent.
+
+## First alpha, before any large study
+
+Do not attempt a full crossover as the first contact with real people. Run a
+falsification-oriented alpha and use it to delete machinery that does not earn
+its place.
+
+- **Primary question:** does LIWM reduce correction burden or improve blinded
+  intent fit compared with a static profile or plain Markdown memory?
+- 20–40 participants, several sessions each, at least two domains.
+- Conditions: F versus D, and F versus B. Skip the full six-condition matrix.
+- Precommitted preference predictions; blinded paired output selection.
+- Measure correction burden, questions asked, first-pass acceptance, technical
+  correctness, and an intent-fidelity rubric — reported together, never singly.
+- Treat the result as pilot evidence. It is not causal proof, and a null result
+  is a useful finding that should shrink the framework.
 
 ## Within-subject experiment
 
@@ -161,9 +246,24 @@ Study mode is opt-in, local-only, and derived from the existing event log:
 ```bash
 liwm study status
 liwm study on
-liwm study export --anonymise --out <path>
+liwm study export --anonymise --out <path>                  # one-off
+liwm study export --anonymise --longitudinal --out <path>   # repeated measures
+liwm study rotate-key      # sever linkage to earlier exports
+liwm study forget-key      # make existing exports permanently unjoinable
 liwm study off
 ```
+
+A one-off export salts freshly, so two exports of the same session cannot be
+linked by anyone, including you. That is correct for a single hand-off and
+useless for a six-week study. A longitudinal export uses a local study key so
+pseudonyms are stable within one study and unrelated across studies, and
+reports `relative_day`, `event_sequence_offset`, `session_ordinal` and
+`task_ordinal` rather than wall-clock stamps — enough for a mixed-effects
+model, not enough to identify someone by their working hours.
+
+Stable pseudonyms are pseudonymity, not anonymity. Anyone holding two exports
+can link them and the local key can re-identify every row. Rotate or delete the
+key when the study ends, and say so in the consent.
 
 It creates no second telemetry log and performs no upload. Export includes only
 event metadata and allowlisted numeric/boolean measurements within the configured
@@ -195,6 +295,9 @@ effectiveness claim.
 ## Threats to validity
 
 - **Simulator affinity:** the fixtures and fold share authorship and assumptions.
+  This applies to the mechanism suite too: it was written by the same people who
+  wrote the mechanisms, and a passing case means the implementation matches the
+  specification, not that the specification is right.
 - **Evaluator dependence:** agent-entered labels are not independent evidence.
 - **Provenance oracle:** LIWM cannot prove a host labelled evidence truthfully.
 - **Carryover:** shared profiles invalidate crossover comparisons.
