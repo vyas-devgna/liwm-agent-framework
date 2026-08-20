@@ -1,61 +1,60 @@
 # Roadmap
 
-## 0.2 — hardening and longitudinal evidence
+## 0.2 — research readiness
 
-The architecture is deliberately frozen for 0.2. The highest-return work is no
-longer scaffolding; it is evidence. See [docs/RESEARCH.md](docs/RESEARCH.md) for
-the protocol, baselines and pre-registration expectations.
+0.2 is not architecture-frozen. It should make the current representation and
+claims adequate for prospective evaluation while preserving the event,
+provenance, privacy, and scope contracts.
 
-- the prospective crossover study itself, against built-in host memory as the
-  live baseline rather than against "no memory";
+- explicit intent graph relationships and inspectable retrieval;
+- committed preference predictions with evaluator provenance and calibration;
+- deterministic install/apply/verify/uninstall plans; repair is idempotent
+  re-application and changed preconditions require a regenerated plan;
+- bounded compaction and retention without losing audit semantics;
+- IntentBench cases, leakage checks, baselines, and run manifests;
+- opt-in local study mode with minimized reviewed exports and no upload;
+- documented host acceptance protocols and evidence-tiered claims;
+- prospective, consented within-subject and longitudinal studies;
+- correctness and intent-fidelity outcomes kept separate from acceptance;
+- stronger provenance attestation and adversarial/concurrency coverage.
 
-- prospective, consented personalized-vs-baseline study protocol;
-- richer episode capture and correctness/intent-fidelity outcome separation;
-- guided selective snapshot restoration with conflict previews;
-- stronger provenance attestation between host adapters and CLI;
-- property-based and network-filesystem concurrency testing;
-- migration fixtures from real prior releases;
-- event and episode retention policy (the log is append-only and currently
-  unbounded; pruning must preserve deterministic re-folding).
+Synthetic benchmark and replay results remain mechanism checks. 0.2 does not
+claim human effectiveness until a controlled preregistered study supports it.
 
-## 0.3 — local retrieval and ranking
+## 0.3 — local retrieval and probabilistic ranking
 
-- pluggable local embedding/vector retrieval with a lexical fallback;
-- pairwise preference-ranking interface;
-- active-learning question selector with calibrated uncertainty;
-- improved Bayesian or probabilistic evidence backend behind the same schema;
+- pluggable local embedding/vector retrieval with lexical fallback;
+- pairwise preference ranking and active-learning selection;
+- empirically calibrated uncertainty behind the existing interfaces;
 - optional OS-keyring-backed profile encryption.
 
-## 0.4 — from preference state to intent model
+## World-model research target
 
-Present LIWM models attributes and preferences. The next structural step is an
-explicit intent state graph, making the relationships first class rather than
-implicit in the taxonomy: goal *conflicts with* anti-goal, preference
-*conditional on* context, outcome *implies* constraint, belief *supported by*
-evidence, hypothesis *predicts* choice, choice *falsifies* hypothesis, decision
-*derived from* intent, dimension *transfers to* domain with probability.
+Framework 0.x is an evidence-based persistent intent and personalization layer:
+a deterministic graph/state engine, not a learned generative world model. A
+future model may represent intent state `I_t`, action `A_t`, context `C_t`,
+response `R_t`, and next intent state `I_{t+1}`, approximating:
 
-That is what would make the "world model" in the name accurate rather than
-aspirational, and the prediction loop shipped in 0.1.0 is the yardstick a
-learned model would have to beat.
+```text
+P(R_t, I_{t+1} | I_t, A_t, C_t)
+```
+
+It must beat the transparent deterministic baselines on held-out prediction,
+calibration, transfer, and safety before replacing them. Current belief
+confidence and question utility must not be relabelled as estimates of that
+distribution.
 
 ## Later research
 
 - multimodal evidence with explicit provenance;
-- multi-profile and team intent models with access boundaries;
-- shared preference policies that never expose private individual evidence;
-- external evaluation models and reproducible benchmark packs;
-- export formats for user-authorized fine-tuning or preference optimization.
+- team intent models with access boundaries;
+- external evaluators and reproducible benchmark packs;
+- user-authorized fine-tuning or preference-optimization exports.
 
-No roadmap item may weaken the immutable constitution, make telemetry default,
-or require a cloud service for the core framework.
+No roadmap item may weaken guarded-path privacy/provenance policy, make
+telemetry default, or require a cloud service for LIWM core.
 
 ---
 
-<div align="center">
-<sub>
-
-[LIWM](README.md) · [Docs index](docs/README.md) · [Architecture](ARCHITECTURE.md) · [Privacy](PRIVACY.md) · [Threat model](THREAT_MODEL.md) · [Roadmap](ROADMAP.md)
-
-</sub>
-</div>
+[LIWM](README.md) · [Research](docs/RESEARCH.md) ·
+[Host acceptance](docs/HOST_ACCEPTANCE.md) · [Privacy](PRIVACY.md)

@@ -3,7 +3,7 @@ name: liwm-evaluation
 description: Measure whether personalisation is actually working - acceptance, calibration, question efficiency, improvement over time. Use for "LIWM stats" or when asked whether LIWM is helping.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   framework: liwm
 ---
 
@@ -18,7 +18,9 @@ Is this actually helping, or does it just feel like it is? Without measurement,
 liwm stats --json
 ```
 
-Everything is computed from the local event log. No telemetry, no upload.
+Everything is computed from the local event log. LIWM performs no telemetry or
+automatic upload; a host provider may still process runtime context under its
+own policy.
 
 ## Metrics worth reporting
 
@@ -31,7 +33,7 @@ Everything is computed from the local event log. No telemetry, no upload.
 | `question_ignore_rate` | share of questions skipped or ignored |
 | `questions_per_accepted_outcome` | **the headline efficiency number** |
 | `revisions_per_artifact` | how many passes to get there |
-| `calibration.brier_score` | prediction accuracy (lower is better) |
+| `calibration.brier_score` | squared prediction error (lower is better; use the Brier label for binary/categorical outcomes) |
 | `calibration.bias` | negative = systematically overconfident |
 | `improvement.verdict` | improving / flat / regressing / insufficient data |
 
@@ -71,11 +73,11 @@ what it has learned so far and how it will be measured."*
 ```bash
 liwm eval modes --json
 liwm eval converge --archetype detail_oriented_researcher --rounds 10 --json
+liwm eval intentbench --json
 ```
 
-These drive deterministic synthetic users with hidden preference vectors and
-measure whether beliefs converge toward them, whether acceptance rises, and
-whether questioning falls.
+These are deterministic synthetic mechanism checks. IntentBench additionally
+enforces that scorer-only ground truth is not passed to an adapter.
 
 Two honesty requirements when reporting these:
 
@@ -87,12 +89,13 @@ Two honesty requirements when reporting these:
 ## Research export
 
 ```bash
-liwm export --anonymise --include-events --out <path>
+liwm study on
+liwm study export --anonymise --out <path>
 ```
 
-Strips free text, identifiers and long strings; keeps structure, dimensions,
-confidences, provenance labels and outcome numbers. Nothing is ever exported
-automatically, and this only happens when the user asks for it.
+Study mode is opt-in and derives a minimized allowlisted view from existing
+events. It never uploads. Pseudonymisation is risk reduction, not an anonymity
+or unlinkability guarantee; inspect the file before sharing.
 
 ## Reporting to the user
 

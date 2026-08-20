@@ -4,12 +4,15 @@
 
 | source | initial weight | durable-confidence ceiling |
 |---|---:|---:|
-| explicit user statement | 1.00 | 0.95 |
-| explicit correction/rejection | 1.00 | 0.99 |
-| direct user edit | 0.90 | 0.90 |
-| repeated alternative selection | 0.80 | 0.85 |
-| repeated behavioral signal | 0.65 | 0.70 |
-| single implicit behavioral signal | 0.30 | 0.30 |
+| explicit user statement | 1.00 | 0.98 |
+| explicit correction/rejection | 1.00 | 0.98 |
+| direct user edit | 0.90 | 0.92 |
+| repeated alternative selection | 0.80 | 0.88 |
+| comparative choice | 0.75 | 0.82 |
+| onboarding answer | 0.70 | 0.70 |
+| repeated behavioral signal | 0.65 | 0.78 |
+| outcome signal | 0.55 | 0.72 |
+| single implicit behavioral signal | 0.30 | 0.55 |
 | agent inference | 0.15 | 0.15 |
 
 Correlated repetitions are discounted. Repeated agent inferences never bootstrap

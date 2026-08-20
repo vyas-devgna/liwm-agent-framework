@@ -84,6 +84,8 @@ liwm assumptions [--project <p>]          liwm constitution [--full]
 liwm reject --dimension <d> --value <v> --reason "<r>"
 liwm forget --dimension <d> | --belief <k> | --project <p>
 liwm export [--out <path>] [--anonymise] [--include-events]
+liwm study status|on|off
+liwm study export [--out <path>] [--anonymise]
 liwm reset [--hard --yes]
 ```
 
@@ -106,7 +108,7 @@ liwm rules list [--state <s>] [--include-rejected]
 liwm rules replay  --id cand_<id>
 liwm rules promote --id cand_<id>
 liwm rules revert  --id cand_<id> --reason "<r>"
-liwm eval modes | converge --archetype <a> --rounds N
+liwm eval modes | converge --archetype <a> --rounds N | intentbench
 ```
 
 ## Exit codes

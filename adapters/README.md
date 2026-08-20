@@ -4,9 +4,10 @@ LIWM attaches to an agent by one mechanism: **one delimited Markdown block in a
 file the agent already reads at the start of a session.** Everything else —
 skills, plugins, hooks — is an optimisation layered on top of that.
 
-That is the whole portability story, and it is why LIWM works on hosts nobody
-has written an adapter for. If your agent reads *any* Markdown file at startup
-and can run a local command, it can use LIWM.
+That is the intended portability mechanism. The registry entries below are
+documented adapters, not evidence that every host/version executes the block as
+intended. A generic host may integrate manually if it reads a startup Markdown
+file and can run a local command.
 
 ```
    ~/.liwm/                    one private profile, host-independent
@@ -55,16 +56,12 @@ that machine (`liwm`, `python3 -m liwm`, `py -m liwm`, or an absolute path into
 a virtualenv). The installer resolves it and records the answer in
 `~/.liwm/config.json`, so `liwm doctor` can tell you later when it stops working.
 
-## Why a block and not a hook
+## Why a block is the portable baseline
 
-Hooks look like the obvious mechanism and are, for this purpose, the wrong one.
-
-In Claude Code, `SessionStart` hook output is **shown to the user**, not added to
-the model's prompt — a hook cannot inject context. Codex hooks *can* return
-`additionalContext`, but only for users who have trusted hooks via `/hooks`, so
-LIWM offers that as an enhancement and never depends on it. A design that
-required hooks would work for a minority of users and silently do nothing for
-everyone else.
+Claude Code `SessionStart` and `UserPromptSubmit` hooks can provide context, and
+Codex hooks can provide additional context after user review/trust. LIWM does
+not depend on either host-specific hook contract. The delimited block remains
+the inspectable common baseline; hooks may be tested as optional enhancements.
 
 The delimited block, by contrast, is universal, inspectable (`cat ~/.claude/CLAUDE.md`),
 diffable, and removable with a text editor if LIWM ever misbehaves.
@@ -93,10 +90,10 @@ shows exactly which files would be touched, and an entry whose `id` matches a
 built-in *corrects* that built-in rather than replacing it — so if a vendor moves
 a path, you can fix it locally without waiting for a release.
 
-## The installation contract, on every host
+## Normative installation contract
 
-Whatever the host, an installer following [`INSTALL_PROMPT.md`](../INSTALL_PROMPT.md)
-must:
+The current prompt instructs an agent to satisfy this contract; deterministic
+apply/verify enforcement is planned. An installer must:
 
 1. **back up** any file it is about to modify, with a timestamp, into `~/.liwm/backups/`;
 2. **preserve** every byte outside the `<!-- LIWM:BEGIN … -->` / `<!-- LIWM:END -->`
@@ -107,7 +104,8 @@ must:
    block and leaves the file byte-identical to what preceded installation.
 
 `liwm hosts plan --host <id> --block <path>` prints that plan without performing
-it, including the byte budget arithmetic. Run it first if you would rather see
+it, including byte-budget arithmetic. It is descriptive and does not yet include
+content hashes or rollback preconditions. Run it first if you would rather see
 the diff before an agent edits your assistant's instructions — which is a
 reasonable thing to want, and the reason the command exists.
 
@@ -116,6 +114,7 @@ reasonable thing to want, and the reason the command exists.
 - [Claude Code](claude-code/README.md) — skills, plugin manifest, why not a hook.
 - [Codex CLI](codex/README.md) — `AGENTS.override.md` precedence, `~/.agents/skills`, the 32 KiB budget.
 - [Generic Agent Skills host](generic-agent/README.md) — the four capabilities a host needs, and how to degrade when it lacks one.
+- [Acceptance protocol](../docs/HOST_ACCEPTANCE.md) — evidence required before a host is called acceptance-tested.
 
 ---
 

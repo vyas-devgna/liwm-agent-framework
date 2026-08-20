@@ -65,13 +65,20 @@ attacker who can modify the LIWM Python package, host global instructions, and
 private files under the user's OS account; such an attacker already controls the
 trusted computing base.
 
+Normal LIWM mutations are mediated through guarded framework APIs and the CLI;
+these enforce provenance, privacy, audit and atomicity. This is an application
+trust boundary, not an OS security boundary. A process with equivalent
+filesystem authority can deliberately rewrite LIWM, its events, or host
+configuration and can reseal rewritten events with new hashes.
+
 ## Residual risks
 
-The CLI cannot cryptographically prove that a host correctly labeled
-provenance. Individual content hashes expose isolated changes but are not tamper-proof against a local
-attacker who can rewrite all files. Regex/allowlist privacy screening may have
-false positives or negatives. Backups intentionally preserve deleted history
-until the user chooses complete deletion.
+The CLI cannot cryptographically prove that a host correctly labelled
+provenance. Event hashes are tamper-evident for accidental or isolated changes,
+not cryptographically authoritative against an account-level attacker who can
+rewrite all files. Regex/allowlist privacy screening may have false positives
+or negatives. Backups intentionally preserve deleted history until the user
+chooses complete deletion.
 
 ## Reporting
 
