@@ -219,9 +219,13 @@ class TestLivenessProbeIsNeverDestructive(LiwmTestCase):
                               "no answer is better than a wrong one")
         killer.assert_not_called()
 
-    def test_an_unknown_platform_falls_back_to_the_age_heuristic(self):
-        """Without a probe, only a genuinely old lock may be reclaimed."""
-        import os as os_module
+    def test_no_probe_falls_back_to_the_age_heuristic(self):
+        """Without a probe, only a genuinely old lock may be reclaimed.
+
+        This patches the probe rather than ``os.name``: on Windows ``pathlib``
+        dispatches on ``os.name``, so faking the platform breaks every path
+        operation in the test rather than the one function under test.
+        """
         from unittest import mock
 
         from liwm.jsonio import FileLock, LockTimeout
@@ -229,7 +233,8 @@ class TestLivenessProbeIsNeverDestructive(LiwmTestCase):
         path = self.home / "fallback.lock"
         held = FileLock(path, timeout=0.2, stale_after=999).acquire()
         try:
-            with mock.patch.object(os_module, "name", "java"):
+            with mock.patch.object(FileLock, "_owner_is_alive",
+                                   lambda self, pid: None):
                 with self.assertRaises(LockTimeout):
                     FileLock(path, timeout=0.2, stale_after=999).acquire()
                 # Same lock, now old enough to be considered abandoned.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import tempfile
 import unittest
 
 from helpers import LiwmTestCase
@@ -27,6 +28,17 @@ from liwm.hosts import (
     skills_dir_for,
 )
 from liwm.integration import remove_bootstrap, upsert_bootstrap
+
+
+def _tmp(*parts):
+    """A throwaway absolute path, spelled the way this platform spells one."""
+    return str(pathlib.Path(tempfile.gettempdir(), *parts))
+
+
+def _expect(*parts):
+    """The absolute path the resolver should produce for :func:`_tmp`."""
+    return pathlib.Path(tempfile.gettempdir(), *parts).expanduser().absolute()
+
 
 
 class TestRegistryShape(unittest.TestCase):
@@ -66,11 +78,11 @@ class TestPathResolution(unittest.TestCase):
             os.environ.pop(name, None)
 
     def test_env_override_relocates_the_host_home(self):
-        os.environ["CODEX_HOME"] = "/tmp/codex-elsewhere"
+        os.environ["CODEX_HOME"] = _tmp("codex-elsewhere")
         spec = get_host("codex")
-        self.assertEqual(str(instruction_file_for(spec)),
-                         "/tmp/codex-elsewhere/AGENTS.md")
-        self.assertEqual(str(config_dir_for(spec)), "/tmp/codex-elsewhere")
+        self.assertEqual(instruction_file_for(spec),
+                         _expect("codex-elsewhere", "AGENTS.md"))
+        self.assertEqual(config_dir_for(spec), _expect("codex-elsewhere"))
 
     def test_a_nested_config_dir_is_relocated_whole(self):
         """The override replaces the whole config dir, not just its last segment.
@@ -79,16 +91,16 @@ class TestPathResolution(unittest.TestCase):
         displayed template used to leave a stray ``opencode/`` segment under the
         override, which pointed the installer at a file that does not exist.
         """
-        os.environ["OPENCODE_CONFIG_DIR"] = "/tmp/oc"
-        self.assertEqual(str(instruction_file_for(get_host("opencode"))),
-                         "/tmp/oc/AGENTS.md")
+        os.environ["OPENCODE_CONFIG_DIR"] = _tmp("oc")
+        self.assertEqual(instruction_file_for(get_host("opencode")),
+                         _expect("oc", "AGENTS.md"))
 
     def test_a_multi_segment_instruction_path_survives_relocation(self):
         spec = dict(get_host("windsurf"))
         spec["home_env"] = "OPENCODE_CONFIG_DIR"  # any override variable will do
-        os.environ["OPENCODE_CONFIG_DIR"] = "/tmp/ws"
-        self.assertEqual(str(instruction_file_for(spec)),
-                         "/tmp/ws/memories/global_rules.md")
+        os.environ["OPENCODE_CONFIG_DIR"] = _tmp("ws")
+        self.assertEqual(instruction_file_for(spec),
+                         _expect("ws", "memories", "global_rules.md"))
 
     def test_codex_skills_live_outside_its_config_dir(self):
         """~/.agents/skills is cross-vendor and is not moved by CODEX_HOME.
@@ -96,15 +108,15 @@ class TestPathResolution(unittest.TestCase):
         Deriving it from the config directory would send the installer to
         $CODEX_HOME/skills, which Codex never reads.
         """
-        os.environ["CODEX_HOME"] = "/tmp/codex-elsewhere"
+        os.environ["CODEX_HOME"] = _tmp("codex-elsewhere")
         self.assertEqual(skills_dir_for(get_host("codex")),
                          pathlib.Path.home() / ".agents" / "skills")
 
     def test_claude_skills_move_with_the_config_dir(self):
-        os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/cc"
-        self.assertEqual(str(skills_dir_for(get_host("claude-code"))), "/tmp/cc/skills")
-        self.assertEqual(str(instruction_file_for(get_host("claude-code"))),
-                         "/tmp/cc/CLAUDE.md")
+        os.environ["CLAUDE_CONFIG_DIR"] = _tmp("cc")
+        self.assertEqual(skills_dir_for(get_host("claude-code")), _expect("cc", "skills"))
+        self.assertEqual(instruction_file_for(get_host("claude-code")),
+                         _expect("cc", "CLAUDE.md"))
 
     def test_a_host_without_skills_has_no_skills_directory(self):
         self.assertIsNone(skills_dir_for(get_host("gemini-cli")))
@@ -119,8 +131,8 @@ class TestPathResolution(unittest.TestCase):
 
     def test_a_user_supplied_absolute_path_is_taken_as_given(self):
         """A user naming a specific file must not have it relocated under them."""
-        spec = {"id": "x", "global_instruction_file": "/tmp/explicit/RULES.md"}
-        self.assertEqual(str(instruction_file_for(spec)), "/tmp/explicit/RULES.md")
+        spec = {"id": "x", "global_instruction_file": _tmp("explicit", "RULES.md")}
+        self.assertEqual(instruction_file_for(spec), _expect("explicit", "RULES.md"))
 
 
 class TestUserExtensibility(LiwmTestCase):
@@ -148,17 +160,18 @@ class TestUserExtensibility(LiwmTestCase):
         self._write_overlay({"hosts": [
             {"id": "codex", "global_instruction_file": "~/.codex/MOVED.md"}]})
         spec = get_host("codex", self.home)
-        self.assertTrue(str(instruction_file_for(spec)).endswith("/.codex/MOVED.md"),
-                        "the correction must win over the built-in derived path")
+        self.assertEqual(instruction_file_for(spec),
+                         pathlib.Path.home() / ".codex" / "MOVED.md",
+                         "the correction must win over the built-in derived path")
         self.assertEqual(spec["name"], "Codex CLI", "unstated fields survive the merge")
         self.assertEqual(spec["source"], "user-override")
 
     def test_an_override_can_move_the_file_out_of_the_config_dir(self):
         """The override is a path, not a filename inside the vendor's directory."""
         self._write_overlay({"hosts": [
-            {"id": "claude-code", "global_instruction_file": "/tmp/elsewhere/RULES.md"}]})
-        self.assertEqual(str(instruction_file_for(get_host("claude-code", self.home))),
-                         "/tmp/elsewhere/RULES.md")
+            {"id": "claude-code", "global_instruction_file": _tmp("elsewhere", "RULES.md")}]})
+        self.assertEqual(instruction_file_for(get_host("claude-code", self.home)),
+                         _expect("elsewhere", "RULES.md"))
 
     def test_a_malformed_overlay_is_ignored_rather_than_fatal(self):
         (self.home / "hosts.json").write_text("{not json", encoding="utf-8")
