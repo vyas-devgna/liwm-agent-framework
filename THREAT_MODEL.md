@@ -77,3 +77,13 @@ until the user chooses complete deletion.
 
 Follow [SECURITY.md](SECURITY.md). Do not open a public issue containing a real
 profile, private event, token, or host configuration backup.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](README.md) · [Docs index](docs/README.md) · [Architecture](ARCHITECTURE.md) · [Privacy](PRIVACY.md) · [Threat model](THREAT_MODEL.md) · [Roadmap](ROADMAP.md)
+
+</sub>
+</div>

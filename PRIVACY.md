@@ -57,3 +57,13 @@ tombstone may establish a new belief; old pre-tombstone evidence stays inactive.
 v0.1.0 relies on operating-system account and disk protections. The design for
 optional at-rest encryption is documented in [docs/ENCRYPTION.md](docs/ENCRYPTION.md);
 it is intentionally not marketed as implemented.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](README.md) · [Docs index](docs/README.md) · [Architecture](ARCHITECTURE.md) · [Privacy](PRIVACY.md) · [Threat model](THREAT_MODEL.md) · [Roadmap](ROADMAP.md)
+
+</sub>
+</div>

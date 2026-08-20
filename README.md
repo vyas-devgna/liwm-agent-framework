@@ -1,10 +1,28 @@
-# LIWM — Latent Intent World Model
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+  <img src="assets/logo.png" width="200" alt="LIWM: a skeptical elephant inspecting a scrap of paper held in its trunk">
+</picture>
+
+# LIWM
+
+**Latent Intent World Model**
+
+*An elephant never forgets. This one asks where you heard that.*
 
 [![CI](https://github.com/vyas-devgna/liwm-agent-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/vyas-devgna/liwm-agent-framework/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
-[![Zero dependencies](https://img.shields.io/badge/dependencies-0-green.svg)](pyproject.toml)
-[![Local only](https://img.shields.io/badge/telemetry-none-green.svg)](PRIVACY.md)
+[![License](https://img.shields.io/badge/license-MIT-161719?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%20–%203.14-161719?style=flat-square)](pyproject.toml)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-C8873A?style=flat-square)](pyproject.toml)
+[![Telemetry](https://img.shields.io/badge/telemetry-none-C8873A?style=flat-square)](PRIVACY.md)
+[![Hosts](https://img.shields.io/badge/works%20with-9%20agents-161719?style=flat-square)](adapters/README.md)
+
+[Install](#install-by-pasting-a-prompt) · [How it learns](#how-it-learns) · [Privacy](#privacy) · [CLI](#cli) · [Does it work?](#does-it-work) · [Docs](#documentation)
+
+</div>
+
+---
 
 **Your agent already remembers you. It cannot tell you where it learned something, how sure it is, or whether the source was actually you.**
 
@@ -16,6 +34,12 @@ What they share is a *representation*: prose appended to a Markdown file. A
 paragraph is a fine way to hold an instruction and a poor way to hold a claim
 about a person, because there is nowhere in it to put the things that make such
 a claim checkable.
+
+<div align="center">
+  <img src="assets/thesis.png" width="620" alt="Two panels. Left: an elephant reads a document wide-eyed and copies it straight into an open notebook. Right: the same elephant holds the document at arm's length, notebook shut under one foot.">
+  <br>
+  <sub><i>The difference is not whether it remembers. It is what gets written down.</i></sub>
+</div>
 
 | | Markdown agent memory | LIWM |
 |---|---|---|
@@ -463,9 +487,11 @@ reports, and asserts the profile is unchanged.
 | [PRIVACY.md](PRIVACY.md) · [THREAT_MODEL.md](THREAT_MODEL.md) | What is stored, what is refused, what is assumed |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Design decisions and the alternatives rejected |
 | [docs/PROFILE_SCHEMA.md](docs/PROFILE_SCHEMA.md) | Field-by-field profile reference |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | Instrumentation for studying this properly |
+| [docs/RESEARCH.md](docs/RESEARCH.md) | The study that would establish whether this actually works |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | When something looks wrong |
 | [ROADMAP.md](ROADMAP.md) · [CONTRIBUTING.md](CONTRIBUTING.md) | Where it is going, and how to help |
+
+**[Full documentation index →](docs/README.md)**
 
 > **Status: 0.1.0 alpha.** The invariants are tested and the API is stable enough
 > to build on, but the effectiveness claims need longitudinal study with real
@@ -495,6 +521,13 @@ and judge 0.1.0 on the paragraph above.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.png">
+    <img src="assets/mark.png" width="56" alt="">
+  </picture>
+</div>
 
 Host documentation used for 0.1.0: [Claude Code skills](https://code.claude.com/docs/en/skills)
 · [memory](https://code.claude.com/docs/en/memory)

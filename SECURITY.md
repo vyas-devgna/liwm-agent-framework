@@ -26,3 +26,13 @@ and candidate-rule bypasses are security-relevant.
 
 Use a temporary `LIWM_HOME` and synthetic data. Do not test against another
 person's profile or modify their agent configuration without permission.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](README.md) · [Docs index](docs/README.md) · [Architecture](ARCHITECTURE.md) · [Privacy](PRIVACY.md) · [Threat model](THREAT_MODEL.md) · [Roadmap](ROADMAP.md)
+
+</sub>
+</div>

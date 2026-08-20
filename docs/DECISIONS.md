@@ -38,3 +38,13 @@ repository name avoids implying ownership of that namespace.
 - https://developers.openai.com/codex/skills
 - https://developers.openai.com/codex/guides/agents-md
 - https://developers.openai.com/codex/plugins
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>

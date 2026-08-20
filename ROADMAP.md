@@ -49,3 +49,13 @@ learned model would have to beat.
 
 No roadmap item may weaken the immutable constitution, make telemetry default,
 or require a cloud service for the core framework.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](README.md) · [Docs index](docs/README.md) · [Architecture](ARCHITECTURE.md) · [Privacy](PRIVACY.md) · [Threat model](THREAT_MODEL.md) · [Roadmap](ROADMAP.md)
+
+</sub>
+</div>

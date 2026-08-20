@@ -116,3 +116,13 @@ reasonable thing to want, and the reason the command exists.
 - [Claude Code](claude-code/README.md) — skills, plugin manifest, why not a hook.
 - [Codex CLI](codex/README.md) — `AGENTS.override.md` precedence, `~/.agents/skills`, the 32 KiB budget.
 - [Generic Agent Skills host](generic-agent/README.md) — the four capabilities a host needs, and how to degrade when it lacks one.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](../docs/README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>

@@ -58,6 +58,11 @@ jobs:
         timeout-minutes: 6
         run: python tests/run_tests.py -v
       - name: Repository, schema, skill, adapter, and Markdown validation
+        env:
+          # TODO: remove once assets/ is populated (see assets/README.md). Until
+          # then the check warns instead of failing, so the reminder is visible
+          # in every build log rather than silently absent.
+          LIWM_ALLOW_MISSING_ASSETS: "1"
         run: python tools/validate_repo.py
       - name: Host registry and platform report
         env:

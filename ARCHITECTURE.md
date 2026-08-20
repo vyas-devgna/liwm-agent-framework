@@ -143,3 +143,13 @@ whether it is case-sensitive (which decides whether two skill directory names
 can collide). Locking is one `O_CREAT|O_EXCL` implementation with stale
 detection, atomic on POSIX and Windows alike, so there is no `fcntl`/`msvcrt`
 divergence to keep in sync.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](README.md) · [Docs index](docs/README.md) · [Architecture](ARCHITECTURE.md) · [Privacy](PRIVACY.md) · [Threat model](THREAT_MODEL.md) · [Roadmap](ROADMAP.md)
+
+</sub>
+</div>

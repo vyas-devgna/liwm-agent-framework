@@ -54,3 +54,13 @@ holding it -- usually a second agent session mid-write.
 Deleting a lock while a writer is live risks a torn write. LIWM will detect and
 quarantine the damage on the next read and rebuild from the event log, but the
 cheaper move is to close the other session first.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>

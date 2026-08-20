@@ -195,3 +195,13 @@ help pre-register it. A negative result is genuinely welcome and more useful
 than another feature: if H2 or H3 does not hold, the parts of this architecture
 that exist to serve them should be removed, and that is a better outcome than
 carrying them indefinitely on the strength of a simulator.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>

@@ -20,3 +20,13 @@ Requirements before implementation:
 - documented behavior when the keyring is locked or unavailable.
 
 Full-disk or encrypted-home protection is the recommendation for v0.1.0.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>

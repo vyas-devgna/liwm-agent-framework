@@ -25,3 +25,13 @@ Unknown fields are preserved for forward compatibility, while the materializer
 only acts on recognized fields. Migration code must explicitly adopt new fields
 into active semantics. This prevents an older host from deleting newer data
 without allowing unknown fields to silently influence behavior.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>

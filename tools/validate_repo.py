@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -127,6 +128,22 @@ def main():
         for path in ROOT.rglob(name):
             if "examples" not in path.parts and "fixtures" not in path.parts:
                 fail(errors, "private-state filename present: %s" % path.relative_to(ROOT))
+
+    # Docs reference brand assets by exact name. A missing one renders as a
+    # broken image on the front page of the project, so it fails the build
+    # rather than waiting for somebody to notice.
+    expected_assets = {
+        "logo.png", "logo-dark.png", "mark.png", "mark-dark.png",
+        "favicon.png", "social-preview.png", "thesis.png",
+    }
+    present = {p.name for p in (ROOT / "assets").glob("*.png")}
+    missing = sorted(expected_assets - present)
+    if missing:
+        if os.environ.get("LIWM_ALLOW_MISSING_ASSETS"):
+            print("WARNING: brand assets not yet added: %s" % ", ".join(missing))
+        else:
+            fail(errors, "missing brand assets (see assets/README.md): %s"
+                 % ", ".join(missing))
 
     check_markdown_links(errors)
     if errors:

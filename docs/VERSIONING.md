@@ -9,3 +9,13 @@ impossible; such exceptions are called out prominently.
 Plugin manifests, Python package, schemas, skills metadata, and release tag use
 the same base version. Codex local-development cachebuster suffixes are not
 release versions.
+
+---
+
+<div align="center">
+<sub>
+
+[LIWM](../README.md) · [Docs index](README.md) · [Architecture](../ARCHITECTURE.md) · [Privacy](../PRIVACY.md) · [Threat model](../THREAT_MODEL.md) · [Roadmap](../ROADMAP.md)
+
+</sub>
+</div>
