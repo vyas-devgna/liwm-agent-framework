@@ -229,6 +229,8 @@ def cmd_doctor(args):
     integrity = store.events.verify()
     state_documents = _validate_state_documents(home, schema_store)
     host_rows = detect_hosts(home)
+    from .installation import inspect_installation
+    interrupted = inspect_installation(home)
     errors = []
 
     try:
@@ -246,6 +248,9 @@ def cmd_doctor(args):
         "constitution_hash_matches": profile.get("constitution_hash") == constitution_hash(),
         "schema_version_current": profile.get("schema_version") == CURRENT_SCHEMA_VERSION,
         "config_present": (home / "config.json").is_file(),
+        # A journal left behind means a plan was in flight when the process
+        # stopped, so some host config may be half written.
+        "no_interrupted_installation": not interrupted["interrupted"],
         "recovery_note": store.last_recovery_note,
     }
     data = {
@@ -264,6 +269,7 @@ def cmd_doctor(args):
             "supports_symlinks": _supports_symlinks(home),
             "filesystem_case_sensitive": _case_sensitive(home),
         },
+        "interrupted_installation": interrupted,
         "hosts": host_rows,
         "hosts_detected": [row["id"] for row in host_rows if row["detected"]],
         "agents_skills_dir": str(Path.home() / ".agents" / "skills"),
@@ -404,11 +410,24 @@ def cmd_hosts(args):
 def cmd_installation(args):
     """Plan and execute hash-guarded host installation lifecycle operations."""
     from .installation import (
-        apply_plan, create_install_plan, create_uninstall_plan, load_plan, save_plan,
-        verify_plan,
+        apply_plan, create_install_plan, create_uninstall_plan, inspect_installation,
+        load_plan, repair_installation, save_plan, verify_plan,
     )
 
     home = _home(args)
+    if args.action == "status":
+        report = inspect_installation(home)
+        return _emit(args, report, text=(
+            "no interrupted installation" if not report["interrupted"] else
+            "interrupted %s of %s: %d applied, %d pending%s" % (
+                report["operation"], report["host"], report["applied"],
+                report["pending"],
+                "" if report["repairable"] else "; NOT repairable: %s"
+                % "; ".join(report["problems"]))))
+    if args.action == "repair":
+        report = repair_installation(home, rollback=args.rollback)
+        return _emit(args, report, text=(
+            report.get("reason") or "repaired by rolling %s" % report["direction"]))
     if args.action == "plan":
         if not args.host:
             raise ValueError("%s plan requires --host" % args.command)
@@ -1809,8 +1828,8 @@ def build_parser():
     s.add_argument("--block", help="path to the bootstrap block, for budget checking")
     s.set_defaults(func=cmd_hosts)
 
-    for command, actions in (("install", ["plan", "apply", "verify", "repair"]),
-                             ("uninstall", ["plan", "apply", "verify"])):
+    for command, actions in (("install", ["plan", "apply", "verify", "status", "repair"]),
+                             ("uninstall", ["plan", "apply", "verify", "status", "repair"])):
         s = sub.add_parser(command, help="%s LIWM host integration safely" % command)
         s.add_argument("action", choices=actions)
         s.add_argument("--host", help="host id used when creating a plan")
@@ -1820,6 +1839,8 @@ def build_parser():
         s.add_argument("--skills-source", help="override LIWM skills source directory")
         s.add_argument("--no-skills", action="store_true",
                        help="manage only the host instruction block")
+        s.add_argument("--rollback", action="store_true",
+                       help="repair by undoing the interrupted plan rather than finishing it")
         s.set_defaults(func=cmd_installation)
 
     s = sub.add_parser("profile", help="show the profile quality report")
