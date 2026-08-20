@@ -35,3 +35,22 @@ feedback so bounded strategy adaptation raises the questioning threshold.
 Say “that is not true about me” or use `liwm reject --dimension …`. LIWM retains
 the rejected inference for audit, removes its active confidence, and prevents
 weak signals from relearning it.
+
+## "could not acquire lock ... within 10.0s" on Windows
+
+A lock is reclaimed by deleting its file, and Windows will not delete a file
+another handle still has open. So where Linux and macOS can force-reclaim a
+lock whose owner LIWM believes is gone, Windows waits for the timeout instead.
+
+This is the safer failure, and it is rarely the one you hit: a process that
+actually crashed has its handles closed by the OS, leaving a plain file that
+reclaims normally. A persistent timeout means something is genuinely still
+holding it -- usually a second agent session mid-write.
+
+    liwm doctor            # confirms the home directory and its state
+    # then, only if no LIWM process is running:
+    del %USERPROFILE%\.liwm\*.lock
+
+Deleting a lock while a writer is live risks a torn write. LIWM will detect and
+quarantine the damage on the next read and rebuild from the event log, but the
+cheaper move is to close the other session first.

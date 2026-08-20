@@ -86,6 +86,12 @@ class TestConcurrency(LiwmTestCase):
                 FileLock(lock_path, timeout=0.2, stale_after=999).acquire()
 
     def test_live_lock_is_never_broken_solely_for_age(self):
+        """Age alone never justifies taking a lock somebody still holds.
+
+        On POSIX the liveness probe answers this. On Windows the filesystem
+        answers it as well, by refusing to delete a file another handle has
+        open. Both are correct, and no combination of settings gets past them.
+        """
         lock_path = self.home / "stale.lock"
         first = FileLock(lock_path, timeout=0.2, stale_after=999).acquire()
         try:
@@ -222,25 +228,47 @@ class TestLivenessProbeIsNeverDestructive(LiwmTestCase):
     def test_no_probe_falls_back_to_the_age_heuristic(self):
         """Without a probe, only a genuinely old lock may be reclaimed.
 
+        The abandoned lock is written as a bare file with no open handle,
+        because that is what a crashed owner actually leaves behind: the OS
+        closes its handles on exit. Simulating it with a *held* FileLock would
+        be a scenario that cannot occur, and would fail on Windows for the right
+        reason -- Windows will not delete a file another handle still has open,
+        which is precisely the protection you want when the owner is alive.
+
         This patches the probe rather than ``os.name``: on Windows ``pathlib``
         dispatches on ``os.name``, so faking the platform breaks every path
         operation in the test rather than the one function under test.
         """
+        import json as json_module
+        import socket
+        import time
         from unittest import mock
 
         from liwm.jsonio import FileLock, LockTimeout
 
         path = self.home / "fallback.lock"
-        held = FileLock(path, timeout=0.2, stale_after=999).acquire()
-        try:
-            with mock.patch.object(FileLock, "_owner_is_alive",
-                                   lambda self, pid: None):
-                with self.assertRaises(LockTimeout):
-                    FileLock(path, timeout=0.2, stale_after=999).acquire()
-                # Same lock, now old enough to be considered abandoned.
-                FileLock(path, timeout=0.2, stale_after=0.0).acquire().release()
-        finally:
-            held.release()
+
+        def write_abandoned(age_seconds):
+            # This machine's hostname, so the liveness probe is genuinely on
+            # the path and the patch below is what makes it decline to answer.
+            path.write_text(json_module.dumps({
+                "pid": 999999, "host": socket.gethostname(),
+                "monotonic": time.time() - age_seconds, "token": "abandoned",
+            }), encoding="utf-8")
+
+        with mock.patch.object(FileLock, "_owner_is_alive",
+                               lambda self, pid: None):
+            write_abandoned(age_seconds=1.0)
+            with self.assertRaises(LockTimeout):
+                FileLock(path, timeout=0.2, stale_after=999).acquire()
+
+            write_abandoned(age_seconds=1.0)
+            reclaimed = FileLock(path, timeout=1.0, stale_after=0.5).acquire()
+            try:
+                self.assertTrue(reclaimed.broke_stale_lock,
+                                "an old, unheld lock is abandoned and reclaimable")
+            finally:
+                reclaimed.release()
 
     def test_a_live_owner_is_reported_alive_on_this_platform(self):
         from liwm.jsonio import FileLock
