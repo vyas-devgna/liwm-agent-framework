@@ -57,6 +57,23 @@ The mark is one ink colour. Restraint is what lets it survive being shrunk.
 - Regenerating one file means regenerating `logo.png` and re-deriving the rest.
   Never redraw a variant by hand — that is how a brand starts to wobble.
 
+## Why the favicon is not a faithful miniature
+
+`logo.png` carries all its tone in the **alpha** channel: every visible pixel is
+the same `#1A1A1A`, and the hatching is rendered as varying opacity. That is
+what makes `logo-dark.png` an exact recolour — swap the RGB, keep the alpha, and
+the engraving is preserved perfectly.
+
+It also means that shrinking the mark averages the hatching toward a pale grey.
+At 32 pixels that is still legible; at 16 it dissolves into a smudge. So the
+favicon's alpha is deliberately pushed toward solid:
+
+    magick favicon-source.png -channel A -level '0%,40%' +channel favicon.png
+
+The favicon exists to be tiny, and being unreadable at its working size is a
+worse sin than being a slightly heavier version of the master. `logo.png`
+remains the faithful one.
+
 ## Setting the social preview
 
 GitHub does not read this directory automatically:
