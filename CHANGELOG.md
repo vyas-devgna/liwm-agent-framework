@@ -36,7 +36,12 @@ Released after an over-engineering audit. Cuts made before shipping: an unused
 `append_jsonl` helper, an unused `INTERACTION_META_DIMENSIONS` constant, an
 empty `dict` subclass, a `None` alias, a single-caller path resolver, a
 duplicated `_clamp`, all-false capability boilerplate, and a
-`retention.episode_retention_days` setting that nothing read. Three bugs found before release were fixed rather than documented: on Windows,
+`retention.episode_retention_days` setting that nothing read. Four bugs found before release were fixed rather than documented. `FileLock.acquire`
+retried its stale-reclaim path without consulting the deadline or sleeping; on
+POSIX that path is unreachable because an open file can still be unlinked, but
+Windows refuses to delete a file another handle holds open, so the failure was
+swallowed and the loop spun a CPU core until something killed it. The deadline
+is now checked on every exit from a failed attempt. Also: on Windows,
 the POSIX `os.kill(pid, 0)` liveness idiom maps onto `TerminateProcess`, so a
 second thread probing a lock would have terminated its own agent -- Windows now
 uses a non-destructive `OpenProcess`/`GetExitCodeProcess` probe. The audit

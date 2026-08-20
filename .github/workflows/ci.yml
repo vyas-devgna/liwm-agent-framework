@@ -38,6 +38,8 @@ jobs:
           - os: macos-latest
             python: "3.14"
     runs-on: ${{ matrix.os }}
+    # A hang must fail fast and legibly rather than burning a six-hour default.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,7 +48,14 @@ jobs:
           # No cache: LIWM has zero runtime dependencies, so there is nothing
           # to restore, and the post-run save step fails when it finds no
           # dependency file to key on.
+      # Run the concurrency module first and alone. It is the only suite that
+      # can hang rather than fail, so isolating it makes a platform-specific
+      # deadlock name itself in the log instead of stopping mid-suite.
+      - name: Concurrency and recovery tests
+        timeout-minutes: 3
+        run: python tests/run_tests.py test_concurrency_recovery -v
       - name: Unit and scenario tests
+        timeout-minutes: 6
         run: python tests/run_tests.py -v
       - name: Repository, schema, skill, adapter, and Markdown validation
         run: python tools/validate_repo.py

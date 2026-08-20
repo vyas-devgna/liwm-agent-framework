@@ -210,6 +210,19 @@ class FileLock:
         STILL_ACTIVE = 259
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+        # Declaring the signatures is not optional on 64-bit Windows: ctypes
+        # defaults restype to c_int, which truncates a 64-bit HANDLE.  Closing
+        # a truncated handle closes whatever else happens to live at that value
+        # in this process, which is a memorable way to corrupt an unrelated
+        # file handle rather than merely to get a wrong answer.
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE,
+                                                ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
             # Access denied means the process exists but belongs to someone
@@ -251,6 +264,17 @@ class FileLock:
 
     # -- public API --------------------------------------------------------
     def acquire(self) -> "FileLock":
+        """Take the lock, or raise :class:`LockTimeout`.  Never spin forever.
+
+        The deadline is checked on *every* path out of a failed attempt,
+        including the one where a stale lock was reclaimed.  An earlier version
+        retried the stale branch without checking, which was unreachable on
+        POSIX and an unbounded busy loop on Windows: Windows refuses to delete
+        a file another handle still has open, so ``unlink`` failed, the failure
+        was swallowed, and the loop restarted immediately with no sleep and no
+        deadline.  A lock LIWM cannot delete must degrade into a timeout the
+        caller can report, not a pegged CPU core.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.time() + self.timeout
         while True:
@@ -262,15 +286,22 @@ class FileLock:
             except OSError as exc:
                 if exc.errno not in (errno.EEXIST,):  # pragma: no cover
                     raise
-                if self._is_stale():
-                    try:
-                        self.path.unlink()
-                        self.broke_stale_lock = True
-                    except OSError:  # pragma: no cover - lost the race
-                        pass
-                    continue
-                if time.time() >= deadline:
-                    raise LockTimeout("could not acquire lock %s within %.1fs" % (self.path, self.timeout))
+
+            reclaimed = False
+            if self._is_stale():
+                try:
+                    self.path.unlink()
+                    self.broke_stale_lock = True
+                    reclaimed = True
+                except OSError:
+                    # Lost the race, or the platform will not delete a file
+                    # that is still open.  Either way, fall through and wait.
+                    pass
+
+            if time.time() >= deadline:
+                raise LockTimeout(
+                    "could not acquire lock %s within %.1fs" % (self.path, self.timeout))
+            if not reclaimed:
                 time.sleep(self.poll)
 
     def release(self) -> None:

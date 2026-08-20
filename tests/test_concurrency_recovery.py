@@ -253,5 +253,57 @@ class TestLivenessProbeIsNeverDestructive(LiwmTestCase):
 
 
 
+
+class TestAcquireIsAlwaysBounded(LiwmTestCase):
+    """A lock LIWM cannot delete must time out, never spin.
+
+    On Windows a file that another handle still has open cannot be unlinked.
+    The stale-reclaim path used to retry immediately on that failure, without
+    consulting the deadline and without sleeping, which is an unbounded busy
+    loop reachable only off POSIX -- so every Linux and macOS run was green
+    while Windows pegged a core until the job was killed.
+    """
+
+    def test_an_undeletable_stale_lock_times_out(self):
+        import time
+        from unittest import mock
+
+        from liwm.jsonio import FileLock, LockTimeout
+
+        path = self.home / "undeletable.lock"
+        path.write_text("{}", encoding="utf-8")
+
+        lock = FileLock(path, timeout=0.5, poll=0.01)
+        with mock.patch.object(FileLock, "_is_stale", lambda self: True), \
+                mock.patch.object(type(path), "unlink",
+                                  side_effect=PermissionError("still open")):
+            started = time.time()
+            with self.assertRaises(LockTimeout):
+                lock.acquire()
+            elapsed = time.time() - started
+
+        self.assertLess(elapsed, 5.0,
+                        "an undeletable lock must time out, not loop forever")
+        self.assertGreaterEqual(elapsed, 0.4, "it must actually wait its timeout")
+
+    def test_a_reclaimable_stale_lock_is_taken_promptly(self):
+        import time
+
+        from liwm.jsonio import FileLock
+
+        path = self.home / "reclaimable.lock"
+        path.write_text("{}", encoding="utf-8")
+
+        started = time.time()
+        lock = FileLock(path, timeout=5.0, stale_after=0.0).acquire()
+        try:
+            self.assertTrue(lock.broke_stale_lock)
+            self.assertLess(time.time() - started, 1.0,
+                            "reclaiming must not wait out a poll interval")
+        finally:
+            lock.release()
+
+
+
 if __name__ == "__main__":
     unittest.main()
