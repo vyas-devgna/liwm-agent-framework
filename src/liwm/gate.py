@@ -65,7 +65,11 @@ NEED_SIGNALS = (
         r"review|critique|refactor|improve|suggest|recommend|advise|explain|summari[sz]e)\b", re.I)),
     ("open_decision", re.compile(
         r"\b(?:should (?:i|we)|which (?:one|approach|library|tool|option)|"
-        r"what(?:'s| is) better|trade-?offs?|pros and cons|help me (?:choose|decide|pick))\b", re.I)),
+        r"what(?:'s| is) better|trade-?offs?|pros and cons|help me (?:choose|decide|pick)|"
+        # "compare the three options" reached the model with no memory at all
+        # until contextecon caught it; presenting a comparison is a formatting
+        # and decision-style question before it is a factual one.
+        r"compare|options for|alternatives|versus|vs\.?)\b", re.I)),
     ("project_work", re.compile(
         r"\b(?:this (?:repo|repository|project|codebase)|our (?:repo|project|codebase)|"
         r"the codebase|ship|release|deploy|merge|commit)\b", re.I)),

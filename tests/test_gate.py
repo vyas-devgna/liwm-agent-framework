@@ -41,6 +41,9 @@ class TestNeedsMemory(unittest.TestCase):
         "review my approach",
         "ship this to production",
         "name this variable",
+        "compare the three options for the cache layer",
+        "postgres versus sqlite here",
+        "what are the alternatives",
     ]
 
     def test_requests_that_depend_on_history_retrieve(self):

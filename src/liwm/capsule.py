@@ -93,6 +93,13 @@ def render_capsule(context):
         out.append("apply:")
         out.extend(_belief_line(item) for item in applies)
 
+    withheld = int(context.get("beliefs_withheld") or 0)
+    if withheld:
+        # An omission the agent cannot see is an omission it cannot recover
+        # from.  One line, and the escape hatch is named.
+        out.append("  (+%d not shown: outranked or indistinguishable -- "
+                   "`liwm context --all` or `liwm why --dimension <d>`)" % withheld)
+
     avoid = context.get("avoid") or []
     if avoid:
         out.append("avoid:")

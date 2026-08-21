@@ -64,17 +64,55 @@ class LexicalRanker:
         return min(0.25, 0.08 * hits)
 
 
-def rank_beliefs(eligible_beliefs, domain=None, project_id=None, task_terms=None, rankers=None):
-    """Rank only the already eligible set; rankers never perform trust filtering."""
+def score_beliefs(eligible_beliefs, domain=None, project_id=None, task_terms=None,
+                  rankers=None):
+    """Score and order the eligible set, returning ``[(belief, score)]``.
+
+    The score is returned rather than recomputed by callers, so the number the
+    receipt reports is by construction the number that decided the ordering.
+    """
     rankers = list(rankers or (StructuredRanker(), LexicalRanker()))
-    return sorted(
-        eligible_beliefs,
-        key=lambda belief: -sum(
+    scored = [
+        (belief, round(sum(
             float(ranker.score(belief, domain=domain, project_id=project_id,
                                task_terms=task_terms) or 0.0)
-            for ranker in rankers
-        ),
-    )
+            for ranker in rankers), 6))
+        for belief in eligible_beliefs
+    ]
+    scored.sort(key=lambda row: -row[1])
+    return scored
+
+
+def rank_beliefs(eligible_beliefs, domain=None, project_id=None, task_terms=None, rankers=None):
+    """Rank only the already eligible set; rankers never perform trust filtering."""
+    return [belief for belief, _ in score_beliefs(
+        eligible_beliefs, domain=domain, project_id=project_id,
+        task_terms=task_terms, rankers=rankers)]
+
+
+#: Scores closer than this are the same score.  Two beliefs separated only by
+#: floating-point noise were not actually ranked against each other.
+TIE_EPSILON = 1e-9
+
+
+def select_beliefs(scored, max_beliefs):
+    """Take the top *max_beliefs*, then drop any tie that straddles the cut.
+
+    Filling the last slots from a block of beliefs the ranker could not tell
+    apart is not selection, it is sampling -- and it costs the same tokens
+    while presenting an arbitrary subset to the model as though it were the
+    relevant one.  Where the boundary falls inside a tied block, the whole
+    block is left out and the capsule says how many were withheld.
+
+    With fewer candidates than slots nothing is excluded, so nothing is tied
+    against anything, and everything is kept.
+    """
+    if len(scored) <= max_beliefs:
+        return [belief for belief, _ in scored], 0
+    boundary = scored[max_beliefs][1]
+    kept = [belief for belief, score in scored[:max_beliefs]
+            if score > boundary + TIE_EPSILON]
+    return kept, max_beliefs - len(kept)
 
 
 def _relevance(belief, domain, project_id, task_terms):
@@ -113,6 +151,7 @@ def _build(
     promoted_rules=None,
     rankers=None,
     gate="auto",
+    include=None,
     receipt=None,
 ):
     """Assemble the compact projection for the current task."""
@@ -217,26 +256,47 @@ def _build(
                                    min_confidence=0.30, exclusions=excluded)
 
     eligible = list(resolved.values())
-    ordered = rank_beliefs(
+    scored = score_beliefs(
         eligible, domain=domain, project_id=project_id,
         task_terms=task_terms, rankers=rankers,
     )
-    ranked = ordered[:max_beliefs]
+    ranked, tied_out = select_beliefs(scored, max_beliefs)
+    # The sufficiency loop: an agent that finds the capsule insufficient names
+    # what it is missing and gets exactly that, rather than falling back to the
+    # whole profile.  Expansion is additive and always recorded.
+    requested = [dim for dim in (include or []) if dim]
+    if requested:
+        chosen = {id(b) for b in ranked}
+        for belief, _ in scored:
+            if id(belief) in chosen:
+                continue
+            if any(belief["dimension"] == dim or belief["dimension"].startswith(dim + ".")
+                   for dim in requested):
+                ranked.append(belief)
+                chosen.add(id(belief))
+        receipt["expanded"] = {"requested": requested,
+                               "added": len(ranked) - (max_beliefs - tied_out)}
+    scores = {id(belief): score for belief, score in scored}
+    withheld = len(eligible) - len(ranked)
     receipt["candidates"] = {
         "stored_beliefs": len(beliefs),
         "eligible_after_scope_and_confidence": len(eligible),
         "selected": len(ranked),
+        "withheld": withheld,
+        "dropped_as_indistinguishable": tied_out,
     }
     receipt["selected"] = [
         {"belief_id": b["id"], "dimension": b["dimension"], "scope": b["scope"],
          "scope_key": b.get("scope_key"), "confidence": b["confidence"],
-         "relevance": _relevance(b, domain, project_id, task_terms)}
+         "relevance": scores[id(b)]}
         for b in ranked
     ]
+    selected_ids = {id(b) for b in ranked}
     receipt["rejected"] = (
-        [{"belief_id": b["id"], "dimension": b["dimension"], "reason": "outranked",
-          "relevance": _relevance(b, domain, project_id, task_terms)}
-         for b in ordered[max_beliefs:]][:20]
+        [{"belief_id": b["id"], "dimension": b["dimension"],
+          "reason": "indistinguishable_from_excluded" if index < max_beliefs else "outranked",
+          "relevance": score}
+         for index, (b, score) in enumerate(scored) if id(b) not in selected_ids][:20]
         + excluded[:20]
     )
 
@@ -332,6 +392,9 @@ def _build(
             "rationale": contract.get("rationale"),
         },
         "profile_maturity": round(maturity, 4),
+        # Naming the count turns a silent omission into a recoverable one: an
+        # agent that needs more can ask for more.
+        "beliefs_withheld": withheld,
         "applies": [
             {
                 "dimension": b["dimension"],

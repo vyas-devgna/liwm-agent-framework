@@ -497,6 +497,11 @@ def cmd_context(args):
         promoted_rules=SelfImprovementStore(store.home).active_rules(),
     )
     kwargs["gate"] = "off" if getattr(args, "no_gate", False) else "auto"
+    if getattr(args, "include", None):
+        kwargs["include"] = args.include
+    if getattr(args, "all_beliefs", False):
+        kwargs["max_beliefs"] = 10 ** 6
+        kwargs["gate"] = "off"
     context, receipt = plan_context(store, **kwargs)
     if args.write:
         _, path = write_runtime_context(store, **kwargs)
@@ -1704,6 +1709,24 @@ def cmd_retro(args):
 
 
 def cmd_eval(args):
+    if args.action == "contextecon":
+        from .evaluation.contextecon import load_scenario, run_contextecon
+        result = run_contextecon(load_scenario(args.cases, scenario=args.scenario))
+        lines = ["context economics: %s (%d turns, %s token counts)" % (
+            result["scenario_id"], result["manifest"]["turns"],
+            result["manifest"]["token_counting"])]
+        lines.append("%-22s %10s %9s %9s %7s" % (
+            "arm", "tokens/turn", "sufficient", "tok/req", "poisoned"))
+        for arm, row in result["arms"].items():
+            lines.append("%-22s %10.1f %9s %9s %7d" % (
+                arm, row["mean_tokens_per_turn"],
+                "n/a" if row["evidence_sufficiency"] is None
+                else "%.2f" % row["evidence_sufficiency"],
+                "n/a" if row["tokens_per_satisfied_requirement"] is None
+                else "%.0f" % row["tokens_per_satisfied_requirement"],
+                row["poison_leak_turns"]))
+        lines.append(result["caveat"])
+        return _emit(args, result, text="\n".join(lines))
     if args.action == "intentbench":
         from .evaluation.intentbench import load_suite, run_intentbench
         result = run_intentbench(load_suite(args.cases, suite=args.suite),
@@ -1923,6 +1946,12 @@ def build_parser():
                    help="emit the ContextReceipt instead of the context")
     s.add_argument("--no-gate", dest="no_gate", action="store_true",
                    help="disable the zero-memory gate and always project")
+    s.add_argument("--include", action="append", metavar="DIMENSION",
+                   help="also project this dimension even if it was outranked; "
+                        "repeatable. The sufficiency loop: ask for what is missing "
+                        "rather than falling back to the whole profile")
+    s.add_argument("--all", dest="all_beliefs", action="store_true",
+                   help="project every applicable belief, ignoring the relevance cut")
     for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
                 "specification_completeness", "recent_correction_rate", "fatigue"):
         s.add_argument("--%s" % key.replace("_", "-"), dest=key, type=float)
@@ -2293,7 +2322,7 @@ def build_parser():
     s.set_defaults(func=cmd_retro)
 
     s = sub.add_parser("eval", help="run local evaluation studies")
-    s.add_argument("action", choices=["converge", "modes", "intentbench"])
+    s.add_argument("action", choices=["converge", "modes", "intentbench", "contextecon"])
     s.add_argument("--archetype", default="impatient_technical_expert")
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)
@@ -2304,6 +2333,8 @@ def build_parser():
                         "against scope, poisoning, forgetting and transfer cases")
     s.add_argument("--adapter", choices=["liwm", "liwm-projection", "static-first"],
                    default="liwm-projection")
+    s.add_argument("--scenario", default="longrunning-v1",
+                   help="context-economics scenario id")
     s.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("study", help="manage opt-in local research exports")
