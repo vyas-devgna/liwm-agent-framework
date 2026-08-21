@@ -94,3 +94,9 @@ tmp/
 *local-command-caveat*.txt
 dist1/
 dist2/
+
+# Media/creator work is a separate project. LIWM holds software, its tests,
+# evaluation artifacts and software documentation -- a YouTube script in here
+# gets restored by whichever agent notices it missing, which is how it came
+# back the first time.
+docs/video/
