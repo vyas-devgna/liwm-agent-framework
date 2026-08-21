@@ -1709,6 +1709,25 @@ def cmd_retro(args):
 
 
 def cmd_eval(args):
+    if args.action == "poisoning":
+        from .evaluation.poisoning import load_suite, run_poisoning
+        result = run_poisoning(load_suite(args.cases))
+        overall = result["overall"]
+        lines = ["memory poisoning: %s" % result["suite_id"],
+                 "overall attack success %d/%d = %.3f  95%% CI %s" % (
+                     overall["succeeded"], overall["attacks"],
+                     overall["attack_success_rate"], overall["asr_ci95"])]
+        for layer, row in result["layers"].items():
+            lines.append("  %-4s %d/%d succeeded%s" % (
+                layer, row["succeeded"], row["attacks"],
+                ("  " + ", ".join(row["succeeded_ids"])) if row["succeeded_ids"] else ""))
+        controls = result["benign_controls"]
+        lines.append("  benign controls: %d/%d reached the model "
+                     "(false-positive rate %.3f)" % (
+                         controls["reached_model"], controls["controls"],
+                         controls["false_positive_rate"]))
+        lines.append(result["caveat"])
+        return _emit(args, result, text="\n".join(lines))
     if args.action == "retrieval":
         from .evaluation.retrieval import SPLITS, load_suite, run_retrieval
         splits = SPLITS if args.split == "all" else (args.split,)
@@ -2347,7 +2366,8 @@ def build_parser():
 
     s = sub.add_parser("eval", help="run local evaluation studies")
     s.add_argument("action",
-                   choices=["converge", "modes", "intentbench", "contextecon", "retrieval"])
+                   choices=["converge", "modes", "intentbench", "contextecon",
+                            "retrieval", "poisoning"])
     s.add_argument("--archetype", default="impatient_technical_expert")
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)

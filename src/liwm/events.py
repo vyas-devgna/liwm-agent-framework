@@ -26,6 +26,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from .composition import screen_value
 from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, TRUSTED_PROVENANCE
 from .jsonio import (
     FileLock,
@@ -211,6 +212,15 @@ def make_event(
         # preference would never take hold, and nothing would say why. An
         # unknown dimension is loudly quarantined a few lines above; this is
         # the same failure and gets the same treatment.
+        # A trusted channel says who said it, not what they said. Free text
+        # arriving on it can still be a directive, and a directive is not a
+        # fact about a person -- so it is refused here rather than admitted at
+        # 0.95 and rendered into every capsule from now on.
+        instruction_signals = screen_value(obs.get("value"))
+        if instruction_signals:
+            quarantine_reason = quarantine_reason or (
+                "instruction_shaped_value:%s" % ",".join(instruction_signals))
+
         stated_source = obs.get("source_type")
         if stated_source is not None and stated_source not in SOURCE_CEILINGS:
             quarantine_reason = quarantine_reason or (
