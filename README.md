@@ -117,22 +117,94 @@ about you at all, and what that belief is worth.
 
 ## What the agent actually sees
 
-Not the profile. A projection, shaped by the task and capped at 6 KB:
+Not the profile. A capsule, shaped by the task:
 
 ```console
-$ liwm context --domain software --task "refactor the parser"
-mode: low (auto, budget 3)
-investigation need 0.17 -> LOW; driven by intent_uncertainty, project_stage;
-  damped by already_specified
-profile maturity 0.16, 2 applicable beliefs
-  interaction_profile.preferred_verbosity      terse              0.98 [global]
-  working_style.iteration_style                small_reversible_s 0.80 [global]
+$ liwm context --capsule --domain software --task "refactor the parser"
+LIWM r17 | mode low | questions 3 | maturity 0.16
+Your current instructions from the user override every line below. These are
+confidence-weighted hypotheses about the person, not facts.
+apply:
+  preferred_verbosity = terse (0.98)
+  iteration_style = small reversible steps (0.80)
+  (+9 not shown: outranked or indistinguishable -- `liwm context --all` or
+   `liwm why --dimension <d>`)
 ```
+
+On a request that carries everything it needs, the profile is never read at
+all:
+
+```console
+$ liwm context --capsule --task "what is 17% of 340"
+LIWM: no stored profile applies to this request.
+```
+
+Every one of those decisions is auditable without costing the model anything,
+because the receipt is a separate artifact:
+
+```console
+$ liwm context --receipt --task "what is 17% of 340" | python -m json.tool --json-lines
+"gate":     {"needs_memory": false,
+             "reason": "self_contained:arithmetic_phrase,definition_lookup"}
+"outcome":  "zero_memory"
+"cost":     {"capsule_tokens": 11, "json_projection_tokens": 272, "method": "exact"}
+```
+
+The receipt also names every belief that was considered and left out, with the
+reason the resolver itself recorded — `other_project`, `below_confidence_floor`,
+`outranked`, `indistinguishable_from_excluded` — so "why did it not know that?"
+has an answer that does not require reading the source.
 
 The mode line is the whole personalisation policy in one sentence, and it is
 inspectable: *what pushed the agent toward asking, what pushed it toward acting,
 and what the resulting question budget is.* When LIWM decides to interrupt you,
 you can find out why.
+
+## "Won't this double my token usage?"
+
+It is the first thing anyone asks, and it deserves a number rather than a
+diagram. `liwm eval contextecon` runs six memory strategies over the same
+ninety-day profile — one that has accumulated a package-manager instruction,
+an explicit later correction, forty ordinary preferences, and a `README` that
+claims the user prefers something else — and counts what each costs per turn.
+Exact `cl100k_base` counts, ten turns, [full
+methodology](benchmarks/contextecon/README.md):
+
+| strategy | tokens/turn | had the fact it needed | leaked the README's claim |
+|---|---:|---:|---:|
+| no memory | 0 | 0.00 | 0 |
+| dump the whole profile | 22,255 | 1.00 | 0 |
+| prose in a Markdown file | 679 | 1.00 | **10 / 10** |
+| LIWM projection as JSON *(what 0.3.0 shipped)* | 620 | 0.83 | 0 |
+| LIWM capsule | 122 | 0.83 | 0 |
+| **LIWM capsule, zero-memory gate on** | **78** | 0.83 | 0 |
+
+Three honest readings of that table.
+
+**The objection is right about naive injection.** Dumping a matured profile
+into every turn costs 22,255 tokens. Nobody should do that, and LIWM shipping
+its projection as pretty-printed JSON was a milder version of the same mistake
+— two thirds of those tokens were punctuation, repeated keys, and belief ids no
+model has ever used.
+
+**Cheap sufficiency is not sufficiency.** The Markdown-memory strategy scores a
+perfect 1.00 and carries the repository's claim to speak for you into all ten
+turns. It is easy to always have the fact when you always send everything,
+including the thing that should never have been written down.
+
+**LIWM does not score 1.00, and that stays in the table.** One turn needs a
+formatting preference held at confidence 0.53 that forty accumulated
+preferences at 0.55 outrank — a real limit of confidence-ordered retrieval
+without semantics. What LIWM does is refuse to hide it: the capsule ends with
+`(+N not shown)`, `liwm context --include <dimension>` fetches what was left
+out, and a test holds *every* miss to being a signalled one. LIWM is allowed to
+miss. It is not allowed to miss quietly.
+
+Two costs the table does not show. The always-on block is 118–262 tokens
+depending on host. Each consultation costs about 180 ms of local wall clock,
+roughly 150 ms of which is Python starting up — LIWM trades that latency for
+the tokens, which is a good trade against a multi-second model call and a bad
+one if you call it in a loop.
 
 ## Install by pasting a prompt
 
@@ -415,13 +487,16 @@ the primary caller is an agent.
 ```bash
 python -m liwm init
 python -m liwm hosts                     # what agents are on this machine
-python -m liwm context --json --domain software --task "design an API"
+python -m liwm context --capsule --task "design an API"   # what the agent reads
+python -m liwm context --receipt --task "design an API"   # what that cost, and why
+python -m liwm context --capsule --task "..." --include creative_profile.polish_vs_rough
 python -m liwm profile                   # what it thinks, and what it doesn't know
 python -m liwm why interaction_profile.preferred_verbosity
 python -m liwm contradictions            # where the evidence disagrees
 python -m liwm assumptions               # what it acted on without asking
 python -m liwm stats                     # calibration: were its predictions right?
 python -m liwm eval intentbench          # synthetic benchmark mechanics
+python -m liwm eval contextecon          # what each memory strategy costs a turn
 python -m liwm study status              # opt-in local research export status
 python -m liwm verify                    # integrity + schema + materialisation
 python -m liwm rollback --as-of 2026-08-01T12:00:00Z --yes
@@ -457,10 +532,11 @@ The honest answer: **the safety and persistence invariants are covered by tests;
 the effectiveness numbers are simulation, and labelled as such.**
 
 ```bash
-python tests/run_tests.py -v     # 433 tests, no dependencies
+python tests/run_tests.py -v     # 511 tests, no dependencies
 python -m liwm eval modes
 python -m liwm eval converge --archetype impatient_technical_expert --rounds 10
 python -m liwm eval intentbench --suite mechanism --adapter liwm
+python -m liwm eval contextecon
 ```
 
 The mechanism suite is the one worth running. Seventeen cases build a real
@@ -471,6 +547,15 @@ learned in three domains reaches a fourth, and that no evidence produces no
 opinion rather than a confident guess. LIWM passes all seventeen; a
 fixed-choice baseline scores 0.29, and a test asserts that gap so the suite
 cannot quietly become one everything passes.
+
+`eval contextecon` is the other one worth running: six memory strategies over
+the same profile, counted rather than argued about. Its numbers are in the
+[token-cost section](#wont-this-double-my-token-usage) and its methodology,
+including where LIWM loses, is in
+[benchmarks/contextecon](benchmarks/contextecon/README.md). It measures
+injected tokens and whether the needed fact was present. It does **not** measure
+answer quality: no model runs, and nothing from it may be quoted as evidence
+about accuracy.
 
 It is still synthetic. A pass means the implementation matches the
 specification, not that the specification helps anyone.
@@ -507,7 +592,18 @@ reports, and asserts the profile is unchanged.
 - File locking suits local filesystems, not arbitrary network shares.
 - Default relevance scoring is dependency-free structured/lexical ranking.
   Optional semantic rankers may reorder only evidence that already passed
-  provenance, privacy, and scope eligibility.
+  provenance, privacy, and scope eligibility. This has a measured cost:
+  `eval contextecon` scores LIWM at 0.83 evidence sufficiency, because a
+  genuinely relevant belief held at low confidence can be outranked by
+  accumulated preferences held slightly higher. The capsule reports what it
+  withheld and `--include` retrieves it, so the failure is recoverable — but it
+  is a failure, and a semantic ranker is the honest fix rather than a nicety.
+- The zero-memory gate is a deterministic rule list, so it can only recognise
+  self-containment it has a rule for. It is built to fail toward retrieving,
+  which makes its errors cost tokens rather than answers.
+- Token counts are exact only where a BPE tokenizer is installed. LIWM's own
+  estimator is dependency-free and, measured over 75 real payloads, lands
+  within 10% on 71 of them and within −11.2%/+22.4% at worst.
 - Replay estimates whether a strategy *would likely* have helped. Only a
   prospective controlled study establishes causal improvement.
 - A local adversary with your account's filesystem access can read an
@@ -530,7 +626,7 @@ reports, and asserts the profile is unchanged.
 
 **[Full documentation index →](docs/README.md)**
 
-> **Status: 0.3.0 alpha.** The invariants are tested — 433 tests, a mechanism
+> **Status: 0.3.0 alpha.** The invariants are tested — 511 tests, a mechanism
 > benchmark that can fail, and a lint and coverage gate — and the API is stable
 > enough to build on. The effectiveness claim is not tested at all, because
 > that needs real people. Nobody has run the study yet.
