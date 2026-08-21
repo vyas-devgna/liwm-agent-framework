@@ -1571,7 +1571,7 @@ def cmd_verify(args):
     store = _store(args)
     schema_store = SchemaStore()
     profile = store.load()
-    integrity = store.events.verify()
+    integrity = store.events.verify(deep=getattr(args, "deep", False))
     schema_errors = schema_store.validate(profile, "user")
     state_documents = _validate_state_documents(store.home, schema_store, include_events=True)
     checkpoints = verify_checkpoints(store.home)
@@ -2309,6 +2309,11 @@ def build_parser():
     s.set_defaults(func=cmd_compact)
 
     s = sub.add_parser("verify", help="verify integrity, schema and materialisation")
+    s.add_argument("--deep", action="store_true",
+                   help="re-hash every archived event individually rather than "
+                        "trusting an archive whose recorded digest still matches. "
+                        "Answers 'was this archive already corrupt when written', "
+                        "which a matching digest cannot")
     s.set_defaults(func=cmd_verify)
 
     s = sub.add_parser("migrate", help="migrate stored data to the current schema")
