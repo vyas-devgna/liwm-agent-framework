@@ -1709,6 +1709,23 @@ def cmd_retro(args):
 
 
 def cmd_eval(args):
+    if args.action == "gate":
+        from .evaluation.gatebench import load_suite, run_gatebench
+        result = run_gatebench(load_suite(args.cases))
+        o = result["overall"]
+        lines = ["zero-memory gate: %s (%d cases)" % (result["suite_id"], o["cases"]),
+                 "accuracy %.3f  95%% CI %s" % (o["accuracy"], o["accuracy_ci95"]),
+                 "false skips     %d/%d  rate %.3f  95%% CI %s   <- the error the "
+                 "user cannot see" % (
+                     o["false_skips"], sum(1 for r in result["rows"] if r["expected"]),
+                     o["false_skip_rate"], o["false_skip_rate_ci95"]),
+                 "false retrieves %d  rate %.3f   <- costs tokens, shows in the receipt"
+                 % (o["false_retrieves"], o["false_retrieve_rate"]),
+                 "weighted loss %.2f (%.3f per case)" % (
+                     o["weighted_loss"], o["weighted_loss_per_case"])]
+        for row in o["failing"]:
+            lines.append("  %-14s %s" % (row["kind"], row["task"]))
+        return _emit(args, result, text="\n".join(lines))
     if args.action == "poisoning":
         from .evaluation.poisoning import load_suite, run_poisoning
         result = run_poisoning(load_suite(args.cases))
@@ -2367,7 +2384,7 @@ def build_parser():
     s = sub.add_parser("eval", help="run local evaluation studies")
     s.add_argument("action",
                    choices=["converge", "modes", "intentbench", "contextecon",
-                            "retrieval", "poisoning"])
+                            "retrieval", "poisoning", "gate"])
     s.add_argument("--archetype", default="impatient_technical_expert")
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)

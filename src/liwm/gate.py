@@ -31,6 +31,9 @@ SCHEMA_VERSION = "0.4.0"
 #: is ``(signal name, pattern)`` and matching one is a vote to skip.
 SELF_CONTAINED = (
     ("arithmetic", re.compile(r"^[\s\d+\-*/^%().,]+=?\s*\??$")),
+    ("arithmetic_command", re.compile(
+        r"^\s*(?:compute|calculate|work out|add up|multiply|divide)\b[^?]*\d",
+        re.I)),
     ("arithmetic_phrase", re.compile(
         r"\b(?:what(?:'s| is)|calculate|compute|how much is)\b[^?]*?\b\d+[\s\d+\-*/^%().,]*\d*\s*\??$",
         re.I)),
@@ -43,7 +46,8 @@ SELF_CONTAINED = (
         re.I)),
     ("mechanical_transform", re.compile(
         r"\b(?:base64|url ?encode|url ?decode|hex|md5|sha\d*|uuid|timestamp|epoch|"
-        r"regex for|escape|unescape)\b", re.I)),
+        r"regex for|escape|unescape|pretty ?print|format this (?:json|xml|yaml|html|"
+        r"sql|css)|minify|indent this)\b", re.I)),
     ("syntax_lookup", re.compile(
         r"\b(?:syntax|signature|flag|option|argument)s?\s+(?:for|of)\b", re.I)),
 )
