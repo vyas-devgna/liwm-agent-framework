@@ -18,4 +18,4 @@ artifacts but never uploads to a package index.
 - [ ] Concurrency/recovery, compaction equivalence, and 100k-event release benchmarks pass.
 - [ ] Synthetic evaluation results are labelled synthetic; no human-study claim is implied.
 - [ ] Release notes describe migrations, compatibility, known limitations, and artifact hashes.
-- [ ] A draft release is inspected before the signed `v0.2.0` tag and artifacts are published.
+- [ ] A draft release is inspected before the signed release tag and artifacts are published.

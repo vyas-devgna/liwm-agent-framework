@@ -9,12 +9,7 @@
   "homepage": "https://github.com/vyas-devgna/liwm-agent-framework",
   "repository": "https://github.com/vyas-devgna/liwm-agent-framework",
   "license": "MIT",
-  "keywords": [
-    "intent",
-    "personalization",
-    "agent-skills",
-    "local-first"
-  ],
+  "keywords": ["intent", "personalization", "agent-skills", "local-first"],
   "skills": "./skills/",
   "interface": {
     "displayName": "LIWM Agent Framework",
