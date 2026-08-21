@@ -109,6 +109,28 @@ registry.
 |---|---|---|---|---|
 | 2026-08-21 | opencode | 1.18.20 | Linux 7.1.8-arch1-3 | **loaded** — staged `SKILL.md` reported by `opencode debug skill` |
 
+### Install rehearsal — opencode 1.18.20, 2026-08-21
+
+A full install into a disposable `OPENCODE_CONFIG_DIR` with a pre-existing
+`AGENTS.md`, LIWM revision `9e2ea7b`, Linux 7.1.8-arch1-3, Python 3.14.7:
+
+| Check | Result |
+|---|---|
+| pre-existing `AGENTS.md` content | preserved byte-for-byte |
+| LIWM blocks in the file after install | exactly 1 |
+| skills installed | 15 |
+| skills opencode actually reports | **15 of 15**, from the installed paths |
+| the command the block names, run as written | returns a capsule, exit 0 |
+| the same command on a self-contained request | zero-memory gate closes, one line |
+| `install apply` rerun | 0 file changes, identical file hash |
+
+This still is **not** acceptance. Every check above is mechanical: paths,
+bytes, idempotence, and whether a binary can enumerate a directory. None of it
+establishes the thing the protocol above is actually for — that a model, given
+a real task and never told about LIWM, consults it and honours what it returns.
+That needs a session with a model, and no acceptance claim should be made
+until one is recorded here.
+
 That probe is why the `opencode` entry now claims `skills: True`. It had been
 recorded as having no skills mechanism and was being given the larger
 self-contained block; opencode 1.18 has one, and additionally auto-loads

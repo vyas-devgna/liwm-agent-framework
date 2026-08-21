@@ -26,9 +26,27 @@ malformed. Preserve all unrelated user configuration.
    same table with `liwm hosts --json`. If your host is not listed, it is still
    supported: any agent that reads a Markdown file at session start can use the
    self-contained block, and you should add an entry for it to ~/.liwm/hosts.json
-   so later runs recognise it. Inspect current local conventions and, when
+   so later runs recognise it -- that overlay has the same shape as the built-in
+   table and shallow-merges over it, so it can also correct a built-in entry that
+   is wrong for your version. Inspect current local conventions and, when
    uncertain, current official host documentation. Do not guess a config path.
    Use platform home/config APIs rather than hard-coding /home or C:\Users.
+
+   Prefer what is on disk to what is on a documentation page. Two shipped
+   entries were wrong because the docs described a different product's file:
+   Antigravity's published path is Gemini CLI's, and Pi's user-level skills
+   directory is undocumented but real. If the host's config directory contains a
+   populated `skills/` or `rules/` directory, that is stronger evidence than the
+   docs, and the entry you write should record `"confidence": "community"` to
+   say where it came from.
+
+   Verify rather than assume. `python tools/probe_host.py <id>` stages a real
+   LIWM skill where your entry claims skills go, runs the host's own
+   introspection command, and reports whether the host actually found it; it
+   needs no model and no credentials. If your host has a comparable command,
+   add it to `INTROSPECTION` in that file. A host with no such command is not a
+   failure, only unverifiable this way -- confirm it by hand instead, and do not
+   describe it as tested.
 
 2. Resolve a stable framework checkout outside project repositories:
    - macOS/Linux: prefer $XDG_DATA_HOME/liwm/framework when XDG_DATA_HOME is set,
@@ -94,6 +112,11 @@ malformed. Preserve all unrelated user configuration.
      copied into the framework checkout;
    - confirm text before and after the bootstrap markers is byte-for-byte
      unchanged from the pre-edit file;
+   - run the exact command the installed block tells the agent to run --
+     `<liwm> context --capsule --task "<something>"` -- and confirm it returns a
+     capsule rather than an error. A block naming a command that does not work
+     is worse than no block, because the failure is silent and lands in a
+     session months from now;
    - report every created, modified, backed-up, linked, or copied path and the
      validation results.
 
