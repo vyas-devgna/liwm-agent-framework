@@ -31,7 +31,7 @@ from .taxonomy import DIMENSION_INDEX
 
 __all__ = ["render_capsule", "PRECEDENCE_LINE"]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 #: Never trimmed, never abbreviated.  An agent that forgets this line will let
 #: a stored preference override what the user just said, which is the single

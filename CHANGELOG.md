@@ -5,6 +5,98 @@ and semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-21
+
+A context-economics release. LIWM could already say what it believed and why;
+it could not say what that cost. The most common criticism of persistent agent
+memory is that feeding it back to the model doubles token usage and bloats the
+context, and until now this repository had no way to answer that except by
+asserting the projection was small.
+
+Measured on a ninety-day profile, exact `cl100k_base` counts, ten turns:
+
+| strategy | tokens/turn | had the needed fact | leaked the README claim |
+|---|---:|---:|---:|
+| dump the whole profile | 22,255 | 1.00 | 0 |
+| prose in a Markdown file | 679 | 1.00 | 10 / 10 |
+| LIWM projection as JSON *(0.3.0)* | 620 | 0.83 | 0 |
+| LIWM capsule, gate on | **78** | 0.83 | 0 |
+
+### Added
+
+- **Zero-memory gate** (`liwm/gate.py`). A deterministic decision, taken before
+  the profile is loaded, about whether a request needs stored memory at all.
+  Asking a model this would be a second inference charged against the budget
+  the gate protects, and unauditable afterwards. Errors are asymmetric — a
+  wrong skip degrades an answer silently, a wrong retrieve costs visible tokens
+  — so need signals win ties and anything unrecognised retrieves.
+- **Context capsule** (`liwm/capsule.py`, `liwm context --capsule`). The
+  projection in the form a model reads: 232 tokens where the same content as
+  pretty-printed JSON is 1,402. A rendering choice, not a filtering one.
+- **ContextReceipt** (`liwm context --receipt`). Gate decision, candidates
+  considered, selected, rejected with the reason the resolver recorded, and the
+  cost of each wire format. Not part of the projection, because an audit record
+  that inflates what it audits is worse than none.
+- **Token accounting** (`liwm/budget.py`). Exact counts where a BPE tokenizer
+  is importable, a dependency-free estimator otherwise, and every number
+  records which. Estimator error over 75 real payloads: mean -0.2%, 71/75
+  within 10%, worst -11.2%/+22.4%.
+- **`liwm eval contextecon`** and `benchmarks/contextecon/`. Six strategies over
+  one profile. The Markdown baseline is built from the raw observation log, not
+  from LIWM's folded profile, so it leaks what such a file really leaks; a test
+  asserts it still does, so it cannot quietly become a strawman.
+- **Sufficiency loop.** `context --include <dimension>` and `--all`. The capsule
+  states how many beliefs it withheld, so a miss is recoverable rather than
+  silent.
+- **`tools/probe_host.py`.** Stages a real `SKILL.md` where the registry claims
+  skills go, runs the host's own introspection, and reports whether it was
+  found. No model, no credentials. A path check, not acceptance.
+- **Two hosts:** Pi (`~/.pi/agent/AGENTS.md`) and Google Antigravity
+  (`~/.gemini/config/rules/GEMINI.md`), both recorded at community confidence
+  because both were corrected against an installed copy rather than a docs page.
+
+### Changed
+
+- **Every host block now runs `context --capsule --task "..."`** instead of
+  `context --json`. Passing the task is not decoration: without it the gate has
+  no hint and retrieves every time.
+- **opencode is a skills host.** It was recorded as having none and was being
+  given the larger self-contained block and no skills. opencode 1.18 has a
+  skills mechanism and also auto-loads `~/.claude/skills` and `~/.agents/skills`.
+  Verified with `tools/probe_host.py`.
+- `resolve_for_context` records why each belief was excluded, so "why was this
+  left out" cannot drift from the filter that left it out.
+- `score_beliefs` returns the score that produced the ordering, replacing a
+  second copy of the ranking arithmetic that only the receipt used.
+
+### Fixed
+
+- **Fixed top-k filled its last slots from beliefs the ranker could not tell
+  apart** — an arbitrary subset presented as a selection, at full token price.
+  Selection now drops a tie straddling the cut and reports the count: on the
+  benchmark scenario, 620 tokens a turn instead of 1,622, for strictly more
+  information.
+- **The runtime-context schema rejected two of its own projections.**
+  `mode.resolved_from` allowed only `auto`, `explicit` and `config`, while the
+  integrity path has emitted `integrity_gate` since 0.3.0. The schema test only
+  ever built the ordinary projection; it now walks all six.
+- **The gate sent "compare the three options" to the model with no memory.**
+  Presenting a comparison is a formatting and decision-style question before it
+  is a factual one.
+
+### Known limits
+
+- Evidence sufficiency is 0.83, not 1.00. A genuinely relevant belief held at
+  confidence 0.53 is outranked by forty accumulated preferences at 0.55 — a real
+  limit of confidence-ordered retrieval without semantics. Every such miss is
+  signalled and recoverable, and a test holds it that way.
+- `eval contextecon` measures retrieval and cost. It does not measure answer
+  quality; no model runs, and nothing from it may be quoted as evidence about
+  accuracy.
+- No host has passed the full acceptance protocol. The opencode record in
+  `docs/HOST_ACCEPTANCE.md` is paths, bytes and idempotence.
+
+
 ## [0.3.0] - 2026-08-21
 
 A correctness and measurement release. No new surface area to speak of; what

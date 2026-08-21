@@ -3,7 +3,7 @@ name: liwm-evaluation
 description: Measure whether personalisation is actually working - acceptance, calibration, question efficiency, improvement over time. Use for "LIWM stats" or when asked whether LIWM is helping.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   framework: liwm
 ---
 

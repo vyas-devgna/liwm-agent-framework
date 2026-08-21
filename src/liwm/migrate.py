@@ -30,10 +30,10 @@ __all__ = [
     "version_tuple",
 ]
 
-CURRENT_SCHEMA_VERSION = "0.3.0"
+CURRENT_SCHEMA_VERSION = "0.4.0"
 
 #: Every version this build knows how to read.
-SUPPORTED_VERSIONS = ("0.1.0", "0.2.0", "0.3.0")
+SUPPORTED_VERSIONS = ("0.1.0", "0.2.0", "0.3.0", "0.4.0")
 
 
 class MigrationError(RuntimeError):
@@ -79,6 +79,12 @@ MIGRATIONS = (
     # defaults. Nothing in user.json needs rewriting, and rewriting it anyway
     # would mean touching evidence in order to change a version string.
     ("0.2.0", "0.3.0", _noop),
+    # 0.3 -> 0.4 changes nothing that is persisted. The release adds the
+    # zero-memory gate, the capsule and the receipt, all of which act on
+    # runtime_context.json -- a projection rebuilt from the log on demand,
+    # never a store of record. user.json, the event log and the intent graph
+    # are untouched.
+    ("0.3.0", "0.4.0", _noop),
 )
 
 

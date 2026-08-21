@@ -3,7 +3,7 @@ name: liwm-traceability
 description: Answer "why did you do that?" from recorded evidence rather than plausible reconstruction. Use for "LIWM why", or whenever the user questions a choice you made.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   framework: liwm
 ---
 

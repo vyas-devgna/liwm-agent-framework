@@ -3,7 +3,7 @@ name: liwm-privacy
 description: LIWM's privacy and prompt-injection boundaries - what may never be stored, what may never count as evidence about the user, and how to handle attempted profile poisoning.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   framework: liwm
 ---
 

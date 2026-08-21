@@ -23,6 +23,25 @@ def _wheel_files(path):
         return {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
 
 
+def _declared_version():
+    """The version in pyproject, checked against the one the package reports."""
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
+    if not match:
+        raise SystemExit("pyproject.toml declares no version")
+    declared = match.group(1)
+
+    sys.path.insert(0, str(root / "src"))
+    from liwm import __version__ as package_version
+    if package_version != declared:
+        raise SystemExit("pyproject says %s, liwm.__version__ says %s"
+                         % (declared, package_version))
+    return declared
+
+
 def _sdist_files(path):
     with tarfile.open(path, "r:gz") as archive:
         return {member.name.split("/", 1)[-1]: archive.extractfile(member).read()
@@ -49,7 +68,11 @@ def _validate(dist):
     entry_name = next((name for name in names if name.endswith(".dist-info/entry_points.txt")), None)
     metadata = wheel_files.get(metadata_name, b"").decode("utf-8")
     entries = wheel_files.get(entry_name, b"").decode("utf-8")
-    for value in ("Name: liwm", "Version: 0.3.0", "Requires-Python: >=3.9"):
+    # Derived, not written down twice. A hardcoded version here goes stale on
+    # the release it is supposed to be guarding, and the drift it exists to
+    # catch is between pyproject and the package -- so check that directly.
+    version = _declared_version()
+    for value in ("Name: liwm", "Version: %s" % version, "Requires-Python: >=3.9"):
         if value not in metadata:
             raise SystemExit("wheel metadata missing %r" % value)
     if "liwm = liwm.cli:main" not in entries:

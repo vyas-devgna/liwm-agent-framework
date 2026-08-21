@@ -9,7 +9,7 @@ from .jsonio import (
     write_json_atomic,
 )
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 DEFAULT_CONFIG = {
     "schema_version": SCHEMA_VERSION,

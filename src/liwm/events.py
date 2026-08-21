@@ -45,7 +45,7 @@ __all__ = [
     "SCHEMA_VERSION",
 ]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 #: Every event kind LIWM knows how to fold.  Unknown kinds are stored and
 #: ignored by the folder, which keeps forward compatibility cheap.

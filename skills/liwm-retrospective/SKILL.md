@@ -3,7 +3,7 @@ name: liwm-retrospective
 description: End-of-work review that turns a session into learning - what was predicted, what was misunderstood, which questions paid off. Run after a meaningful unit of work, not after every reply.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   framework: liwm
 ---
 

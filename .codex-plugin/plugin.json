@@ -1,6 +1,6 @@
 {
   "name": "liwm-agent-framework",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local-first, evidence-backed intent learning for agent collaboration.",
   "author": {
     "name": "Vyas Devgna",
@@ -9,7 +9,12 @@
   "homepage": "https://github.com/vyas-devgna/liwm-agent-framework",
   "repository": "https://github.com/vyas-devgna/liwm-agent-framework",
   "license": "MIT",
-  "keywords": ["intent", "personalization", "agent-skills", "local-first"],
+  "keywords": [
+    "intent",
+    "personalization",
+    "agent-skills",
+    "local-first"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "LIWM Agent Framework",
@@ -17,7 +22,11 @@
     "longDescription": "A local-first intent layer whose guarded APIs refuse known sensitive dimensions and keep project-scoped evidence separate from global preferences.",
     "developerName": "Vyas Devgna",
     "category": "Productivity",
-    "capabilities": ["Local-first", "Agent Skills", "Intent learning"],
+    "capabilities": [
+      "Local-first",
+      "Agent Skills",
+      "Intent learning"
+    ],
     "websiteURL": "https://github.com/vyas-devgna/liwm-agent-framework",
     "privacyPolicyURL": "https://github.com/vyas-devgna/liwm-agent-framework/blob/main/PRIVACY.md",
     "defaultPrompt": [

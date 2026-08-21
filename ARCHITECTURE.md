@@ -15,6 +15,7 @@ chain of thought, or host-specific profile format is required.
 | Evidence | Provenance trust, source ceilings, decay, combination | `events.py`, `evidence.py` |
 | State | Fold events into profile and project views | `profile.py`, `projects.py`, `scope.py` |
 | Adaptation | Context, modes, fatigue, active question selection | `context.py`, `modes.py`, `questions.py` |
+| Context control | Whether to retrieve, what to send, what it cost | `gate.py`, `capsule.py`, `budget.py` |
 | Learning | Feedback, prediction, bounded strategy | `feedback.py`, `prediction.py`, `strategy.py` |
 | Evolution | Retrospective, replay, candidate promotion | `retrospective.py`, `evaluation/`, `selfimprove.py` |
 | Interface | CLI, skills, host adapters | `cli.py`, `skills/`, `adapters/` |
@@ -73,6 +74,55 @@ decay curve the profile uses, bounded by the effective confidence of the
 evidence beneath it, and evidence ages on its own clock rather than the
 element's. Consumers deciding how much to believe should read the effective
 pair; the recorded pair is the audit trail.
+
+## Context control
+
+Everything above decides what LIWM *believes*. This layer decides what reaches
+the model, and it exists because the most common criticism of persistent agent
+memory is not that it forgets but that it costs: feeding memory back into the
+model is supposed to double token usage and bloat the context. That is an
+empirical claim, so it gets three components and a benchmark rather than a
+rebuttal.
+
+**The zero-memory gate** (`gate.py`) runs before the profile is loaded, so a
+request that needs no memory does not pay to assemble any. It is a
+deterministic rule list, not a model call: asking a model whether it needs
+memory is a second inference charged against the budget the gate exists to
+protect, and its answer cannot be audited afterwards. Its errors are asymmetric
+— a wrong skip degrades the answer silently, a wrong retrieve costs a few
+hundred visible tokens — so need signals win ties and anything unrecognised
+retrieves.
+
+**Selection** (`context.py`) takes the top *k* by relevance and then drops any
+tie that straddles the cut. Filling the last slots from a block of beliefs the
+ranker cannot tell apart is sampling, not selection: it costs the same tokens
+and presents an arbitrary subset to the model as though it were the relevant
+one. What was left out is counted, stated in the capsule, and retrievable with
+`context --include <dimension>` — the sufficiency loop, so an agent that finds
+the capsule thin asks for the missing piece rather than falling back to the
+whole profile.
+
+**The capsule** (`capsule.py`) is the wire format. The same projection as JSON
+spends about two thirds of itself on punctuation, repeated keys and `belief_id`
+hex strings no model has ever used, because an agent asks `liwm why --dimension
+<d>`, never by id. The capsule is a rendering choice and not a filtering one:
+the precedence rule, every applicable belief with confidence and non-default
+scope, anti-preferences, project constraints, contradictions and promoted rules
+all survive it.
+
+**The receipt** (`plan_context`) records the gate decision, how many beliefs
+were considered, which were selected, which were rejected and for what reason
+the resolver itself recorded, and what each wire format would cost. It is
+deliberately not part of the projection: an audit record that inflates the
+thing it audits is worse than none.
+
+Token counting (`budget.py`) uses an exact BPE tokenizer when one is
+importable and a dependency-free estimator otherwise, and every number records
+which produced it. LIWM never depends on a tokenizer.
+
+`liwm eval contextecon` runs six strategies over one profile and reports cost,
+whether the needed fact was present, and whether the untrusted repository claim
+leaked. It measures retrieval, not answer quality; no model runs.
 
 ## Scope lattice
 

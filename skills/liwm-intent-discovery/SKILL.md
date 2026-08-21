@@ -3,7 +3,7 @@ name: liwm-intent-discovery
 description: Elicit what a user actually wants before building, using scenarios and comparisons rather than specification questions. Use in MEDIUM/HIGH mode or when a request is ambitious, novel, or vaguely stated.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   framework: liwm
 ---
 

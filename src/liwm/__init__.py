@@ -28,8 +28,8 @@ Quick start (CLI)::
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
-__schema_version__ = "0.3.0"
+__version__ = "0.4.0"
+__schema_version__ = "0.4.0"
 __all__ = [
     "__version__",
     "__schema_version__",

@@ -25,7 +25,7 @@ import re
 
 __all__ = ["gate_decision", "needs_memory", "SELF_CONTAINED", "NEED_SIGNALS"]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 #: Positive evidence that the request carries everything it needs.  Each entry
 #: is ``(signal name, pattern)`` and matching one is a vote to skip.

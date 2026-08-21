@@ -3,7 +3,7 @@ name: liwm
 description: Latent Intent World Model - persistent understanding of how this specific user works. Consult before non-trivial work to load their learned preferences, decide how much to ask, and record what is learned. Handles "LIWM low/medium/high/auto/off/on", "LIWM profile", "LIWM why", "LIWM onboarding", "LIWM forget", "LIWM export", "LIWM reset", "LIWM stats", "LIWM contradictions", "LIWM assumptions", "LIWM review".
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   framework: liwm
   role: router
 ---

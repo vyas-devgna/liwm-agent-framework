@@ -22,7 +22,7 @@ from .jsonio import (
 
 __all__ = ["DEFAULT_STRATEGY", "BOUNDS", "StrategyStore", "update_from_events"]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 #: Starting point for a brand-new profile: neutral, mildly conservative.
 DEFAULT_STRATEGY = {

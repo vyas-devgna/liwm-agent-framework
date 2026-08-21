@@ -77,7 +77,7 @@ from ..context import plan_context
 
 __all__ = ["ARMS", "load_scenario", "run_contextecon", "build_home"]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 ARMS = ("no_memory", "full_dump", "markdown_memory",
         "liwm_json", "liwm_capsule", "liwm_capsule_gated")

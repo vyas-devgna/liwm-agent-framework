@@ -37,7 +37,7 @@ __all__ = [
     "account", "ESTIMATOR_ERROR", "PIECE_SCALE",
 ]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 #: GPT-family pre-tokenizer split, in the subset of the pattern that Python's
 #: ``re`` accepts.  Each piece it yields costs at least one token.
