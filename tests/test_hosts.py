@@ -333,8 +333,11 @@ class TestNewHostEntries(unittest.TestCase):
         self.assertEqual(spec["skills_rel"], "skills")
 
     def test_pi_reads_a_global_agents_file(self):
+        # as_posix(), not str(): the separator is a backslash on Windows and a
+        # string suffix comparison passes on POSIX while failing there.
         spec = get_host("pi")
-        self.assertTrue(str(instruction_file_for(spec)).endswith(".pi/agent/AGENTS.md"))
+        resolved = instruction_file_for(spec).as_posix()
+        self.assertTrue(resolved.endswith(".pi/agent/AGENTS.md"), resolved)
 
     def test_pi_records_the_override_file_ahead_of_agents_md(self):
         """AGENTS.override.md replaces AGENTS.md rather than adding to it.
@@ -349,7 +352,7 @@ class TestNewHostEntries(unittest.TestCase):
 
     def test_antigravity_uses_its_observed_layout(self):
         spec = get_host("antigravity")
-        resolved = str(instruction_file_for(spec))
+        resolved = instruction_file_for(spec).as_posix()
         self.assertTrue(resolved.endswith(".gemini/config/rules/GEMINI.md"), resolved)
         self.assertEqual(spec["instruction_budget_bytes"], 12000)
 

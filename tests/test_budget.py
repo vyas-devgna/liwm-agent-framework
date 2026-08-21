@@ -44,7 +44,10 @@ class TestEstimator(unittest.TestCase):
         for path in payloads:
             if not path.exists():
                 continue
-            text = path.read_text(encoding="utf-8")
+            # Newlines normalised: a CRLF checkout on Windows would change the
+            # token count of the same file and fail a bound that is about the
+            # estimator, not about line endings.
+            text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
             actual = exact_tokens(text)
             error = (estimate_tokens(text) - actual) / actual
             with self.subTest(payload=path.name):
