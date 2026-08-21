@@ -23,7 +23,8 @@ from pathlib import Path
 from . import __version__
 from .constitution import INVARIANTS, constitution_hash
 from .config import ConfigStore
-from .context import build_runtime_context, write_runtime_context
+from .capsule import render_capsule
+from .context import plan_context, write_runtime_context
 from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, SOURCE_WEIGHTS, TRUSTED_PROVENANCE
 from .events import EVENT_KINDS, EventStore
 from .feedback import FEEDBACK_KINDS, record_feedback
@@ -495,11 +496,22 @@ def cmd_context(args):
         strategy=strategy.load(),
         promoted_rules=SelfImprovementStore(store.home).active_rules(),
     )
+    kwargs["gate"] = "off" if getattr(args, "no_gate", False) else "auto"
+    context, receipt = plan_context(store, **kwargs)
     if args.write:
-        context, path = write_runtime_context(store, **kwargs)
+        _, path = write_runtime_context(store, **kwargs)
         context["_written_to"] = str(path)
-    else:
-        context = build_runtime_context(store, **kwargs)
+    if getattr(args, "receipt", False):
+        # The receipt is the audit record, not model context; it is emitted on
+        # its own so it can never be mistaken for something to paste into a
+        # prompt.
+        return _emit(args, receipt, text=None)
+    if getattr(args, "capsule", False):
+        # Deliberately bypasses --json: the capsule is the wire format for the
+        # model, and asking for it in JSON would reinstate the overhead it
+        # exists to remove.
+        sys.stdout.write(render_capsule(context) + "\n")
+        return EXIT_OK
     lines = [
         "mode: %s (%s, budget %s)" % (
             context["mode"]["effective"], context["mode"]["resolved_from"],
@@ -1905,6 +1917,12 @@ def build_parser():
     s.add_argument("--signals", help="JSON object of AUTO signals")
     s.add_argument("--stage")
     s.add_argument("--write", action="store_true", help="also write runtime_context.json")
+    s.add_argument("--capsule", action="store_true",
+                   help="emit the compact capsule the model should read")
+    s.add_argument("--receipt", action="store_true",
+                   help="emit the ContextReceipt instead of the context")
+    s.add_argument("--no-gate", dest="no_gate", action="store_true",
+                   help="disable the zero-memory gate and always project")
     for key in ("intent_uncertainty", "novelty", "consequence", "reversibility",
                 "specification_completeness", "recent_correction_rate", "fatigue"):
         s.add_argument("--%s" % key.replace("_", "-"), dest=key, type=float)

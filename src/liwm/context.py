@@ -14,17 +14,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .budget import account
 from .evidence import age_days
 from .config import ConfigStore
 from .fatigue import profile_maturity
+from .gate import gate_decision
 from .jsonio import utc_now, write_json_atomic
 from .modes import Signals, mode_profile, resolve_auto
 from .scope import resolve_for_context
 from .taxonomy import decision_impact
 
 __all__ = [
-    "build_runtime_context", "write_runtime_context", "DEFAULT_MAX_BELIEFS",
-    "StructuredRanker", "LexicalRanker", "rank_beliefs",
+    "build_runtime_context", "plan_context", "write_runtime_context",
+    "DEFAULT_MAX_BELIEFS", "StructuredRanker", "LexicalRanker", "rank_beliefs",
 ]
 
 SCHEMA_VERSION = "0.3.0"
@@ -99,7 +101,7 @@ def _relevance(belief, domain, project_id, task_terms):
     return round(conf * impact * scope_score * recency + term_bonus, 5)
 
 
-def build_runtime_context(
+def _build(
     store,
     domain=None,
     project_id=None,
@@ -110,12 +112,17 @@ def build_runtime_context(
     strategy=None,
     promoted_rules=None,
     rankers=None,
+    gate="auto",
+    receipt=None,
 ):
     """Assemble the compact projection for the current task."""
+    receipt = receipt if receipt is not None else {}
     config = ConfigStore(store.home).load()
     requested_mode = (mode or "auto").lower()
     integrity = store.events.verify()
     if not integrity["ok"]:
+        receipt["outcome"] = "withheld"
+        receipt["outcome_reason"] = "integrity_gate"
         return {
             "schema_version": SCHEMA_VERSION,
             "generated_at": utc_now(),
@@ -135,6 +142,8 @@ def build_runtime_context(
             "reminders": ["Run `liwm verify`; no learned state was exposed."],
         }
     if not config.get("enabled", True):
+        receipt["outcome"] = "withheld"
+        receipt["outcome_reason"] = "disabled"
         contract = mode_profile("off")
         return {
             "schema_version": SCHEMA_VERSION,
@@ -158,17 +167,78 @@ def build_runtime_context(
         }
     elif requested_mode == "auto" and config.get("default_mode", "auto") != "auto":
         mode = config["default_mode"]
+
+    # The Zero-Memory Gate runs before the profile is loaded, so a turn that
+    # needs no memory does not pay for assembling it either.
+    gate_mode = (gate or "auto").lower()
+    if gate_mode not in ("auto", "off"):
+        raise ValueError("gate must be 'auto' or 'off', got %r" % (gate,))
+    gated = gate_decision(
+        task, project_id=project_id, domain=domain,
+        # gate="off" disables the gate, which means always retrieving.
+        force=None if gate_mode == "auto" else "on",
+    )
+    receipt["gate"] = gated
+    if not gated["needs_memory"]:
+        receipt["outcome"] = "zero_memory"
+        receipt["outcome_reason"] = gated["reason"]
+        contract = mode_profile("silent")
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": utc_now(),
+            "profile_revision": None,
+            "onboarding_status": "not_consulted",
+            "context": {"domain": domain, "project_id": project_id,
+                        "task_hint": (task or "")[:160]},
+            "mode": {
+                "effective": "silent", "requested": requested_mode,
+                "resolved_from": "zero_memory_gate", "question_budget": 0,
+                "one_at_a_time": False, "experiential_ratio": 0.0,
+                "investigation_need": None,
+                "rationale": "this request is self-contained (%s); no profile was read"
+                             % gated["reason"],
+            },
+            "profile_maturity": 0.0, "applies": [], "avoid": [],
+            "open_uncertainties": [], "contradictions": [], "project": None,
+            "active_rules": [], "strategy": {},
+            # Learning is unaffected: the turn still produces evidence, it just
+            # does not consume any.
+            "learning_enabled": bool(config.get("learning_enabled", True)),
+            "zero_memory": True,
+            "reminders": ["No stored profile was consulted for this request."],
+        }
+
     profile = store.load()
     beliefs = profile.get("beliefs", [])
     task_terms = [t.lower() for t in (task or "").split() if len(t) > 3][:12]
 
+    excluded = []
     resolved = resolve_for_context(beliefs, domain=domain, project_id=project_id,
-                                   min_confidence=0.30)
+                                   min_confidence=0.30, exclusions=excluded)
 
-    ranked = rank_beliefs(
-        list(resolved.values()), domain=domain, project_id=project_id,
+    eligible = list(resolved.values())
+    ordered = rank_beliefs(
+        eligible, domain=domain, project_id=project_id,
         task_terms=task_terms, rankers=rankers,
-    )[:max_beliefs]
+    )
+    ranked = ordered[:max_beliefs]
+    receipt["candidates"] = {
+        "stored_beliefs": len(beliefs),
+        "eligible_after_scope_and_confidence": len(eligible),
+        "selected": len(ranked),
+    }
+    receipt["selected"] = [
+        {"belief_id": b["id"], "dimension": b["dimension"], "scope": b["scope"],
+         "scope_key": b.get("scope_key"), "confidence": b["confidence"],
+         "relevance": _relevance(b, domain, project_id, task_terms)}
+        for b in ranked
+    ]
+    receipt["rejected"] = (
+        [{"belief_id": b["id"], "dimension": b["dimension"], "reason": "outranked",
+          "relevance": _relevance(b, domain, project_id, task_terms)}
+         for b in ordered[max_beliefs:]][:20]
+        + excluded[:20]
+    )
 
     maturity = profile_maturity(profile, domain=domain)
 
@@ -301,6 +371,51 @@ def build_runtime_context(
     }
 
     return _trim(context)
+
+
+def plan_context(store, **kwargs):
+    """Build the projection and its ContextReceipt.
+
+    Returns ``(context, receipt)``.  The receipt is deliberately *not* part of
+    the projection: it exists to account for the tokens the projection costs,
+    and an audit record that inflates the thing it audits is worse than none.
+    It is written to disk or printed on request, never handed to the model.
+    """
+    import json
+
+    receipt = {"schema_version": SCHEMA_VERSION, "requested_at": utc_now()}
+    context = _build(store, receipt=receipt, **kwargs)
+    receipt.setdefault("outcome", "assembled")
+    receipt.setdefault("outcome_reason", "gate_open")
+    receipt["request"] = {
+        "domain": kwargs.get("domain"),
+        "project_id": kwargs.get("project_id"),
+        "task": (kwargs.get("task") or "")[:200],
+        "mode": kwargs.get("mode", "auto"),
+    }
+    # Both wire formats are costed separately.  They are alternatives, never a
+    # sum: a turn sends one of them, so adding them would invent a cost nobody
+    # paid.
+    from .capsule import render_capsule
+    forms = account({"json_projection": json.dumps(context, indent=2, ensure_ascii=False)})
+    caps = account({"capsule": render_capsule(context)})
+    receipt["cost"] = {
+        "json_projection_tokens": forms["parts"]["json_projection"]["tokens"],
+        "json_projection_bytes": forms["parts"]["json_projection"]["bytes"],
+        "capsule_tokens": caps["parts"]["capsule"]["tokens"],
+        "capsule_bytes": caps["parts"]["capsule"]["bytes"],
+        "method": forms["method"],
+    }
+    if forms["method"] == "estimated":
+        receipt["cost"]["error_bounds"] = forms["error_bounds"]
+    receipt["mode"] = context.get("mode", {}).get("effective")
+    receipt["profile_revision"] = context.get("profile_revision")
+    return context, receipt
+
+
+def build_runtime_context(store, **kwargs):
+    """Assemble the compact projection for the current task."""
+    return plan_context(store, **kwargs)[0]
 
 
 def _trim(context, max_bytes=MAX_BYTES):

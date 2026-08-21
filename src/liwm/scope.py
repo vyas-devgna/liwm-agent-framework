@@ -291,26 +291,41 @@ def cross_domain_hypotheses(beliefs, known_domains, policy=None):
     return out
 
 
-def resolve_for_context(beliefs, domain=None, project_id=None, min_confidence=0.0):
+def resolve_for_context(beliefs, domain=None, project_id=None, min_confidence=0.0,
+                        exclusions=None):
     """Pick the winning belief per dimension for a given working context.
 
     Narrower scope wins over broader scope at equal-or-better confidence, which
     is what makes "for this project, do the opposite" work without rewriting the
     global model.
+
+    Pass a list as ``exclusions`` to receive ``{belief_id, dimension, reason}``
+    for everything that did not survive.  It is recorded here rather than
+    reconstructed by the caller so that "why was this left out" can never drift
+    away from the filter that actually left it out.
     """
     best = {}
+    dropped = exclusions if exclusions is not None else []
+    def drop(b, reason):
+        dropped.append({"belief_id": b.get("id"), "dimension": b.get("dimension"),
+                        "reason": reason})
     for b in beliefs:
         if b.get("status", "active") != "active" or b.get("rejected_by_user"):
+            drop(b, "rejected" if b.get("rejected_by_user") else "inactive")
             continue
         scope = b.get("scope", "global")
         if scope == "project" and b.get("scope_key") != project_id:
+            drop(b, "other_project")
             continue
         if scope == "domain" and (domain is None or b.get("scope_key") != domain):
+            drop(b, "other_domain")
             continue
         if scope == "session":
+            drop(b, "session_scoped")
             continue
         conf = float(b.get("confidence", 0.0))
         if conf < min_confidence:
+            drop(b, "below_confidence_floor")
             continue
         dim = b.get("dimension")
         incumbent = best.get(dim)
@@ -319,7 +334,11 @@ def resolve_for_context(beliefs, domain=None, project_id=None, min_confidence=0.
             continue
         # Specificity first, then confidence.
         if SCOPE_ORDER[scope] < SCOPE_ORDER[incumbent.get("scope", "global")]:
+            drop(incumbent, "superseded_by_narrower_scope")
             best[dim] = b
         elif scope == incumbent.get("scope") and conf > float(incumbent.get("confidence", 0.0)):
+            drop(incumbent, "lower_confidence_for_dimension")
             best[dim] = b
+        else:
+            drop(b, "lost_dimension_contest")
     return best
