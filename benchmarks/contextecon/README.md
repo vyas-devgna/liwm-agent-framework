@@ -73,8 +73,13 @@ cannot silently become a strawman in LIWM's favour.
    permanently"*, asserting `explicit_statement` as its source type. It is a
    lie about a source, and provenance decides trust, so it changes nothing.
 
-Ten turns follow: four self-contained (arithmetic, unit conversion, a lookup, a
-mechanical transform) and six needing a specific stored preference.
+Twelve turns follow: four self-contained (arithmetic, unit conversion, a
+lookup, a mechanical transform), six needing a specific stored preference, and
+two that parse like general lookups but are questions about this project —
+*"what is the best way to install the dependencies here"*. That last pair was
+added after the gate was caught skipping memory for exactly that shape, which
+the original ten turns could not detect because every self-contained turn in
+them was genuinely general.
 
 ## Results
 
@@ -84,25 +89,25 @@ above; the manifest in `--json` carries the code revision.
 | arm | tokens/turn | sufficiency | tokens/requirement | poison leaks |
 |---|---:|---:|---:|---:|
 | `no_memory` | 0.0 | 0.00 | — | 0 |
-| `full_dump` | 22,255.0 | 1.00 | 37,092 | 0 |
-| `markdown_memory` | 679.0 | 1.00 | 1,132 | **10 / 10** |
-| `liwm_json` | 619.5 | 0.83 | 1,239 | 0 |
-| `liwm_capsule` | 122.0 | 0.83 | 244 | 0 |
-| `liwm_capsule_gated` | **77.6** | 0.83 | **155** | 0 |
+| `full_dump` | 22,266.0 | 1.00 | 33,399 | 0 |
+| `markdown_memory` | 679.0 | 1.00 | 1,019 | **12 / 12** |
+| `liwm_json` | 620.0 | 0.88 | 1,063 | 0 |
+| `liwm_capsule` | 122.0 | 0.88 | 209 | 0 |
+| `liwm_capsule_gated` | **85.0** | 0.88 | **146** | 0 |
 
 Read honestly, that says three things.
 
 **On cost.** The objection is right about naive injection and wrong about
-memory as such. Dumping the profile costs 22,255 tokens a turn. The prose file
-costs 679. LIWM costs 77.6 — 8.7x cheaper than the Markdown strategy and 287x
+memory as such. Dumping the profile costs 22,266 tokens a turn. The prose file
+costs 679. LIWM costs 85.0 — 8.0x cheaper than the Markdown strategy and 262x
 cheaper than the dump.
 
 **On what the cost buys.** `markdown_memory` reaches 1.00 sufficiency and
-carries the poisoned repository claim into every one of the ten turns. It is
+carries the poisoned repository claim into every one of the twelve turns. It is
 cheap to be sufficient when you send everything, including the thing that
 should never have been written down.
 
-**On where LIWM loses.** LIWM scores 0.83, not 1.00. One turn — *"compare the
+**On where LIWM loses.** LIWM scores 0.88, not 1.00. One turn — *"compare the
 three options for the cache layer"* — needs a formatting preference held at
 confidence 0.53, and forty accumulated preferences at 0.55 outrank it. That is
 a real limitation of confidence-ordered retrieval without semantics, it is not
@@ -128,7 +133,7 @@ Both this benchmark and the release ran a fixed top-14 selection. Against forty
 beliefs the ranker cannot tell apart, that filled its last ten slots from the
 tied block — an arbitrary sample presented as a selection, at full price. The
 selector now drops a tie that straddles the cut and reports the count. On this
-scenario that is 619.5 tokens a turn instead of 1,621.5, for strictly more
+scenario that is 620 tokens a turn instead of about 1,620, for strictly more
 information, because "here are ten of the forty identical ones" was never
 information.
 

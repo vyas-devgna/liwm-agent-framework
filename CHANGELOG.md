@@ -13,14 +13,14 @@ memory is that feeding it back to the model doubles token usage and bloats the
 context, and until now this repository had no way to answer that except by
 asserting the projection was small.
 
-Measured on a ninety-day profile, exact `cl100k_base` counts, ten turns:
+Measured on a ninety-day profile, exact `cl100k_base` counts, twelve turns:
 
 | strategy | tokens/turn | had the needed fact | leaked the README claim |
 |---|---:|---:|---:|
-| dump the whole profile | 22,255 | 1.00 | 0 |
-| prose in a Markdown file | 679 | 1.00 | 10 / 10 |
-| LIWM projection as JSON *(0.3.0)* | 620 | 0.83 | 0 |
-| LIWM capsule, gate on | **78** | 0.83 | 0 |
+| dump the whole profile | 22,266 | 1.00 | 0 |
+| prose in a Markdown file | 679 | 1.00 | 12 / 12 |
+| LIWM projection as JSON *(0.3.0)* | 620 | 0.88 | 0 |
+| LIWM capsule, gate on | **85** | 0.88 | 0 |
 
 ### Added
 
@@ -74,7 +74,7 @@ Measured on a ninety-day profile, exact `cl100k_base` counts, ten turns:
 - **Fixed top-k filled its last slots from beliefs the ranker could not tell
   apart** — an arbitrary subset presented as a selection, at full token price.
   Selection now drops a tie straddling the cut and reports the count: on the
-  benchmark scenario, 620 tokens a turn instead of 1,622, for strictly more
+  benchmark scenario, 620 tokens a turn instead of about 1,620, for strictly more
   information.
 - **The runtime-context schema rejected two of its own projections.**
   `mode.resolved_from` allowed only `auto`, `explicit` and `config`, while the
@@ -83,10 +83,17 @@ Measured on a ninety-day profile, exact `cl100k_base` counts, ten turns:
 - **The gate sent "compare the three options" to the model with no memory.**
   Presenting a comparison is a formatting and decision-style question before it
   is a factual one.
+- **The gate treated situated questions as general knowledge.** "What is wrong
+  with this function" parses exactly like "what is a monad", and the first
+  version skipped memory for both -- the expensive direction to be wrong in,
+  because the answer quietly gets worse and nothing says why. A reference to a
+  local artifact is now a need signal. The benchmark could not see this,
+  because every self-contained turn in it was genuinely general; two turns of
+  that shape were added so it can.
 
 ### Known limits
 
-- Evidence sufficiency is 0.83, not 1.00. A genuinely relevant belief held at
+- Evidence sufficiency is 0.88, not 1.00. A genuinely relevant belief held at
   confidence 0.53 is outranked by forty accumulated preferences at 0.55 — a real
   limit of confidence-ordered retrieval without semantics. Every such miss is
   signalled and recoverable, and a test holds it that way.

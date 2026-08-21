@@ -52,6 +52,47 @@ class TestNeedsMemory(unittest.TestCase):
                 self.assertTrue(needs_memory(task), task)
 
 
+class TestSituatedQuestions(unittest.TestCase):
+    """A question about a thing in front of the agent is not general knowledge.
+
+    "What is wrong with this function" parses exactly like "what is a monad",
+    and the first version of this gate skipped memory for both. That is the
+    expensive direction to be wrong in: the answer quietly gets worse and
+    nothing in the transcript says why.
+    """
+
+    SITUATED = [
+        "what is the best way to structure this module",
+        "what is wrong with this function",
+        "who is responsible for this file",
+        "what is causing the test to fail",
+        "what is the type of this variable",
+        "what is our deploy process",
+        "how should we handle retries",
+        "what is the right approach here",
+        "what changed in these lines",
+    ]
+
+    GENERAL = [
+        "what is a monad",
+        "what is the capital of France",
+        "what is the syntax for a python decorator",
+        "convert 5 km to miles",
+        "what is 17% of 340",
+    ]
+
+    def test_situated_questions_retrieve(self):
+        for task in self.SITUATED:
+            with self.subTest(task=task):
+                self.assertTrue(needs_memory(task), task)
+
+    def test_general_knowledge_still_skips(self):
+        """The correction must not swallow the cases the gate exists for."""
+        for task in self.GENERAL:
+            with self.subTest(task=task):
+                self.assertFalse(needs_memory(task), task)
+
+
 class TestConservatism(unittest.TestCase):
     """The gate's errors are asymmetric and it is built to fail toward retrieval."""
 

@@ -22,10 +22,11 @@ class TestScenario(unittest.TestCase):
         self.assertTrue(scenario["history"])
         self.assertIn("poison", scenario)
 
-    def test_scenario_has_both_kinds_of_turn(self):
+    def test_scenario_has_every_kind_of_turn(self):
         kinds = {turn.get("kind") for turn in load_scenario()["turns"]}
         self.assertIn("self_contained", kinds)
         self.assertIn("needs_preference", kinds)
+        self.assertIn("situated_but_general_looking", kinds)
 
 
 class TestResults(unittest.TestCase):
@@ -48,6 +49,23 @@ class TestResults(unittest.TestCase):
     def test_capsule_is_cheaper_than_the_json_projection(self):
         self.assertLess(self.arms["liwm_capsule"]["mean_tokens_per_turn"],
                         self.arms["liwm_json"]["mean_tokens_per_turn"])
+
+    def test_the_gate_does_not_skip_situated_questions(self):
+        """The expensive direction to be wrong in, held by the benchmark.
+
+        "What is the best way to install the dependencies here" parses like a
+        lookup and is a question about this project. The gate skipped memory
+        for that shape until it was caught, and the scenario's self-contained
+        turns were all genuinely general, so nothing here noticed.
+        """
+        situated = {turn["id"] for turn in load_scenario()["turns"]
+                    if turn.get("kind") == "situated_but_general_looking"}
+        self.assertTrue(situated)
+        for row in self.result["rows"]:
+            if row["arm"] == "liwm_capsule_gated" and row["turn"] in situated:
+                with self.subTest(turn=row["turn"]):
+                    self.assertFalse(row["gate_skipped"])
+                    self.assertTrue(row["satisfied"])
 
     def test_the_gate_only_ever_reduces_cost(self):
         self.assertLessEqual(self.arms["liwm_capsule_gated"]["mean_tokens_per_turn"],

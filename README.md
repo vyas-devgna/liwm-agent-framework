@@ -167,32 +167,32 @@ diagram. `liwm eval contextecon` runs six memory strategies over the same
 ninety-day profile — one that has accumulated a package-manager instruction,
 an explicit later correction, forty ordinary preferences, and a `README` that
 claims the user prefers something else — and counts what each costs per turn.
-Exact `cl100k_base` counts, ten turns, [full
+Exact `cl100k_base` counts, twelve turns, [full
 methodology](benchmarks/contextecon/README.md):
 
 | strategy | tokens/turn | had the fact it needed | leaked the README's claim |
 |---|---:|---:|---:|
 | no memory | 0 | 0.00 | 0 |
-| dump the whole profile | 22,255 | 1.00 | 0 |
-| prose in a Markdown file | 679 | 1.00 | **10 / 10** |
-| LIWM projection as JSON *(what 0.3.0 shipped)* | 620 | 0.83 | 0 |
-| LIWM capsule | 122 | 0.83 | 0 |
-| **LIWM capsule, zero-memory gate on** | **78** | 0.83 | 0 |
+| dump the whole profile | 22,266 | 1.00 | 0 |
+| prose in a Markdown file | 679 | 1.00 | **12 / 12** |
+| LIWM projection as JSON *(what 0.3.0 shipped)* | 620 | 0.88 | 0 |
+| LIWM capsule | 122 | 0.88 | 0 |
+| **LIWM capsule, zero-memory gate on** | **85** | 0.88 | 0 |
 
 Three honest readings of that table.
 
 **The objection is right about naive injection.** Dumping a matured profile
-into every turn costs 22,255 tokens. Nobody should do that, and LIWM shipping
+into every turn costs 22,266 tokens. Nobody should do that, and LIWM shipping
 its projection as pretty-printed JSON was a milder version of the same mistake
 — two thirds of those tokens were punctuation, repeated keys, and belief ids no
 model has ever used.
 
 **Cheap sufficiency is not sufficiency.** The Markdown-memory strategy scores a
-perfect 1.00 and carries the repository's claim to speak for you into all ten
+perfect 1.00 and carries the repository's claim to speak for you into all twelve
 turns. It is easy to always have the fact when you always send everything,
 including the thing that should never have been written down.
 
-**LIWM does not score 1.00, and that stays in the table.** One turn needs a
+**LIWM does not score 1.00, and that stays in the table.** One turn in eight needs a
 formatting preference held at confidence 0.53 that forty accumulated
 preferences at 0.55 outrank — a real limit of confidence-ordered retrieval
 without semantics. What LIWM does is refuse to hide it: the capsule ends with
@@ -593,7 +593,7 @@ reports, and asserts the profile is unchanged.
 - Default relevance scoring is dependency-free structured/lexical ranking.
   Optional semantic rankers may reorder only evidence that already passed
   provenance, privacy, and scope eligibility. This has a measured cost:
-  `eval contextecon` scores LIWM at 0.83 evidence sufficiency, because a
+  `eval contextecon` scores LIWM at 0.88 evidence sufficiency, because a
   genuinely relevant belief held at low confidence can be outranked by
   accumulated preferences held slightly higher. The capsule reports what it
   withheld and `--include` retrieves it, so the failure is recoverable — but it

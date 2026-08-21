@@ -66,10 +66,21 @@ NEED_SIGNALS = (
     ("open_decision", re.compile(
         r"\b(?:should (?:i|we)|which (?:one|approach|library|tool|option)|"
         r"what(?:'s| is) better|trade-?offs?|pros and cons|help me (?:choose|decide|pick)|"
+        r"(?:the )?best way|how should (?:i|we)|what(?:'s| is) the right\b|"
         # "compare the three options" reached the model with no memory at all
         # until contextecon caught it; presenting a comparison is a formatting
         # and decision-style question before it is a factual one.
         r"compare|options for|alternatives|versus|vs\.?)\b", re.I)),
+    # A question about a thing in front of the agent is situated, however
+    # general its grammar looks. "What is wrong with this function" parses
+    # exactly like "what is a monad" and is not remotely the same request.
+    ("local_artifact_reference", re.compile(
+        r"\b(?:this|that|these|those)\s+(?:file|function|method|class|module|test|tests|"
+        r"error|bug|variable|line|lines|change|changes|code|script|branch|commit|repo|"
+        r"repository|project|package|module|config|schema|query|component)\b|"
+        r"\b(?:the|my|our)\s+(?:test|tests|build|builds|codebase|repo|repository|deploy|"
+        r"pipeline|failure|stack ?trace)\b|"
+        r"\bhere\b", re.I)),
     ("project_work", re.compile(
         r"\b(?:this (?:repo|repository|project|codebase)|our (?:repo|project|codebase)|"
         r"the codebase|ship|release|deploy|merge|commit)\b", re.I)),
