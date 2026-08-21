@@ -168,6 +168,54 @@ class TestSchemaConformance(LiwmTestCase):
         errors = self.schemas.validate(context, "runtime-context")
         self.assertEqual(errors, [], errors[:5])
 
+    def test_every_projection_path_validates(self):
+        """Not just the ordinary one.
+
+        The gated and withheld paths return a differently shaped projection,
+        and a schema only checked against the happy path is a schema that
+        certifies whichever case nobody exercised. The `resolved_from` enum was
+        missing both gate values when this was written -- one of them shipped.
+        """
+        from liwm.config import ConfigStore
+        from liwm.context import build_runtime_context
+
+        self.observe("interaction_profile.preferred_verbosity", "terse")
+        for index in range(20):
+            self.observe("preferences.tool_%d" % index, "choice_%d" % index,
+                         source_type="repeated_behavioral")
+
+        cases = {
+            "zero_memory": dict(task="what is 17% of 340"),
+            "withheld": dict(task="draft the release notes"),
+            "explicit_mode": dict(task="draft the release notes", mode="high"),
+            "gate_disabled": dict(task="what is 17% of 340", gate="off"),
+            "expanded": dict(task="draft the release notes",
+                             include=["preferences.tool_3"]),
+        }
+        for label, kwargs in cases.items():
+            with self.subTest(path=label):
+                context = build_runtime_context(self.store, **kwargs)
+                errors = self.schemas.validate(context, "runtime-context")
+                self.assertEqual(errors, [], "%s: %s" % (label, errors[:3]))
+
+        config = ConfigStore(self.home)
+        data = config.load()
+        data["enabled"] = False
+        config.save(data)
+        context = build_runtime_context(self.store, task="draft the release notes")
+        self.assertEqual(self.schemas.validate(context, "runtime-context"), [])
+
+    def test_the_gated_projection_is_marked_as_such(self):
+        from liwm.context import build_runtime_context
+
+        self.observe("interaction_profile.preferred_verbosity", "terse")
+        context = build_runtime_context(self.store, task="what is 17% of 340")
+        self.assertTrue(context["zero_memory"])
+        self.assertEqual(context["mode"]["resolved_from"], "zero_memory_gate")
+        self.assertEqual(context["applies"], [])
+        # A turn that consumes nothing still produces evidence.
+        self.assertTrue(context["learning_enabled"])
+
     def test_metrics_validate(self):
         from liwm.metrics import MetricsStore
 

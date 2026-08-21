@@ -99,7 +99,9 @@
           "enum": [
             "auto",
             "explicit",
-            "config"
+            "config",
+            "zero_memory_gate",
+            "integrity_gate"
           ]
         },
         "question_budget": {
@@ -205,6 +207,15 @@
       },
       "minItems": 1,
       "description": "Always includes the precedence reminder that explicit instructions win."
+    },
+    "beliefs_withheld": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Applicable beliefs the relevance cut left out. Non-zero means the capsule said so and `context --include` can fetch them; a silent omission would make the projection unauditable."
+    },
+    "zero_memory": {
+      "type": "boolean",
+      "description": "True when the zero-memory gate decided this request was self-contained and no profile was read. Learning is unaffected."
     }
   }
 }
