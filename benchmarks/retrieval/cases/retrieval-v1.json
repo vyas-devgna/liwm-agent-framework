@@ -1,0 +1,204 @@
+{
+  "suite_id": "retrieval-v1",
+  "description": "Does the projection contain the preference the task actually needs? One profile holding a belief on every dimension plus undifferentiated noise; each case is a natural request that turns on exactly one of them. Written before any intent-aware ranker existed, and frozen by content hash.",
+  "authoring_note": "Tasks are phrased as a user would phrase them, without naming the dimension or its value. A case whose wording contains its own answer measures string matching, not retrieval.",
+  "profile": {
+    "noise_beliefs": 40,
+    "noise_source": "repeated_behavioral",
+    "noise_prefix": "preferences.legacy_choice",
+    "note": "Noise sits at the confidence a repeated behavioural observation earns, which is slightly above what a single explicit statement decays to. That is the whole difficulty: the target belief is real and relevant and still loses on confidence alone."
+  },
+  "tasks": {
+    "interaction_profile.preferred_verbosity": [
+      "summarise what this service does",
+      "give me the outcome of the migration",
+      "walk me through what you changed"
+    ],
+    "interaction_profile.preferred_directness": [
+      "tell me whether this design is any good",
+      "is my approach here wrong"
+    ],
+    "interaction_profile.preferred_question_frequency": [
+      "start on the payments refactor",
+      "take this ticket and run with it"
+    ],
+    "interaction_profile.technical_language_preference": [
+      "explain why the build is slow",
+      "describe how the cache eviction works"
+    ],
+    "interaction_profile.explanation_depth": [
+      "why did that query get faster",
+      "explain the fix you just made"
+    ],
+    "interaction_profile.examples_vs_first_principles": [
+      "teach me how the scheduler decides ordering",
+      "help me understand backpressure"
+    ],
+    "interaction_profile.pace": [
+      "let's get through the backlog",
+      "work through these five issues"
+    ],
+    "interaction_profile.challenge_level": [
+      "here is my plan, what do you think",
+      "does this architecture hold up"
+    ],
+    "interaction_profile.autonomy_preference": [
+      "fix the failing tests",
+      "clean up the dead code in this package",
+      "handle the dependency upgrade"
+    ],
+    "interaction_profile.confirmation_preference": [
+      "drop the unused table",
+      "rewrite the git history on this branch"
+    ],
+    "interaction_profile.progress_visibility": [
+      "port the whole module to the new API",
+      "run the long migration"
+    ],
+    "reasoning_profile.abstraction_comfort": [
+      "explain the plugin system",
+      "describe the relationship between these two services"
+    ],
+    "reasoning_profile.systems_thinking_preference": [
+      "this endpoint times out under load, sort it",
+      "the same bug keeps coming back in different places"
+    ],
+    "reasoning_profile.exploration_vs_execution": [
+      "we need caching here",
+      "there is a performance problem somewhere in the ingest path"
+    ],
+    "reasoning_profile.novelty_preference": [
+      "pick a queue for this",
+      "what should we use for background jobs"
+    ],
+    "reasoning_profile.ambiguity_tolerance": [
+      "the requirements are vague, start anyway",
+      "we do not know the final data shape yet"
+    ],
+    "reasoning_profile.risk_tolerance_in_projects": [
+      "should we rewrite this or patch it",
+      "how aggressive should the rollout be"
+    ],
+    "reasoning_profile.detail_sensitivity": [
+      "review this pull request",
+      "check my migration script"
+    ],
+    "reasoning_profile.evidence_preference": [
+      "is this change actually faster",
+      "convince me this optimisation is worth it"
+    ],
+    "reasoning_profile.tradeoff_style": [
+      "we can have latency or memory, not both",
+      "balance readability against speed here"
+    ],
+    "reasoning_profile.step_omission_tolerance": [
+      "show me how you derived that number",
+      "explain the reasoning behind the schema change"
+    ],
+    "reasoning_profile.conceptual_uptake_speed": [
+      "introduce me to the consensus protocol we use",
+      "bring me up to speed on this subsystem"
+    ],
+    "creative_profile.novelty_seeking": [
+      "design the onboarding flow",
+      "come up with an approach for the plugin API"
+    ],
+    "creative_profile.conventionality_tolerance": [
+      "lay out the new settings screen",
+      "propose a structure for this package"
+    ],
+    "creative_profile.polish_vs_rough": [
+      "get something working for the demo tomorrow",
+      "put together a prototype of the importer"
+    ],
+    "creative_profile.simplicity_vs_richness": [
+      "design the configuration surface",
+      "what options should the exporter take"
+    ],
+    "creative_profile.aesthetic_direction": [
+      "style the dashboard",
+      "pick the look for the landing page"
+    ],
+    "creative_profile.creative_risk_appetite": [
+      "suggest something unusual for the navigation",
+      "how bold should this redesign be"
+    ],
+    "creative_profile.imperfection_tolerance": [
+      "ship the beta with the rough edges",
+      "is this good enough to release"
+    ],
+    "working_style.session_length_preference": [
+      "plan out the rest of this refactor",
+      "how should we break up this piece of work"
+    ],
+    "working_style.iteration_style": [
+      "rework the authentication layer",
+      "restructure the data model"
+    ],
+    "working_style.review_style": [
+      "go over my changes before I merge",
+      "check this diff"
+    ],
+    "working_style.planning_preference": [
+      "we need to add multi-tenancy",
+      "start on the reporting feature"
+    ],
+    "working_style.scope_discipline": [
+      "fix this bug, and I noticed some other issues nearby",
+      "while you are in there, should you tidy the rest"
+    ],
+    "working_style.tooling_attitude": [
+      "should we add a linter for this",
+      "set up the build for the new package"
+    ],
+    "working_style.documentation_appetite": [
+      "I have finished the parser",
+      "the new endpoint is done"
+    ],
+    "working_style.frustration_triggers": [
+      "this is the third time we have been here",
+      "we keep going round in circles on this"
+    ],
+    "decision_style.speed": [
+      "which database should we go with",
+      "we need to pick a deployment target"
+    ],
+    "decision_style.reversibility_preference": [
+      "should the schema change go out in one step",
+      "how do we roll this out"
+    ],
+    "decision_style.option_breadth": [
+      "what are our options for the queue",
+      "how could we solve the duplicate write problem"
+    ],
+    "decision_style.delegation_comfort": [
+      "can you take the whole reporting module",
+      "should I hand this off to you"
+    ],
+    "decision_style.automation_appetite": [
+      "the release steps are tedious",
+      "should this run on a schedule"
+    ],
+    "communication_profile.tone": [
+      "write the release announcement",
+      "draft a note to the team about the outage"
+    ],
+    "communication_profile.humour": [
+      "write the changelog entry",
+      "put together the demo script"
+    ],
+    "communication_profile.formatting_preference": [
+      "compare the three options for the cache layer",
+      "lay out the differences between these approaches",
+      "present the benchmark results"
+    ],
+    "communication_profile.emoji_tolerance": [
+      "write the pull request description",
+      "draft the commit message"
+    ],
+    "communication_profile.vocabulary_register": [
+      "write the design document",
+      "draft the incident report"
+    ]
+  }
+}

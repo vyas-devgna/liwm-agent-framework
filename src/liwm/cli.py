@@ -1709,6 +1709,25 @@ def cmd_retro(args):
 
 
 def cmd_eval(args):
+    if args.action == "retrieval":
+        from .evaluation.retrieval import SPLITS, load_suite, run_retrieval
+        splits = SPLITS if args.split == "all" else (args.split,)
+        result = run_retrieval(load_suite(args.cases), splits=splits,
+                               use_intent=not args.no_intent)
+        lines = ["retrieval %s (%d/%d cases, intent %s)" % (
+            result["suite_id"], result["manifest"]["cases_scored"],
+            result["manifest"]["cases_total"],
+            "off" if args.no_intent else "on")]
+        lines.append("%-10s %6s %8s %-18s %10s %7s %8s" % (
+            "split", "cases", "recall", "ci95", "precision", "mrr", "tokens"))
+        for name, row in result["splits"].items():
+            if not row:
+                continue
+            lines.append("%-10s %6d %8.3f %-18s %10.3f %7.3f %8.0f" % (
+                name, row["cases"], row["recall"], str(row["recall_ci95"]),
+                row["precision"], row["mrr"], row["mean_tokens"]))
+        lines.append("Recall is retrieval recall, not answer accuracy. No model ran.")
+        return _emit(args, result, text="\n".join(lines))
     if args.action == "contextecon":
         from .evaluation.contextecon import load_scenario, run_contextecon
         result = run_contextecon(load_scenario(args.cases, scenario=args.scenario))
@@ -2322,7 +2341,8 @@ def build_parser():
     s.set_defaults(func=cmd_retro)
 
     s = sub.add_parser("eval", help="run local evaluation studies")
-    s.add_argument("action", choices=["converge", "modes", "intentbench", "contextecon"])
+    s.add_argument("action",
+                   choices=["converge", "modes", "intentbench", "contextecon", "retrieval"])
     s.add_argument("--archetype", default="impatient_technical_expert")
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)
@@ -2335,6 +2355,12 @@ def build_parser():
                    default="liwm-projection")
     s.add_argument("--scenario", default="longrunning-v1",
                    help="context-economics scenario id")
+    s.add_argument("--split", choices=["dev", "holdout", "all"], default="dev",
+                   help="retrieval split. Development reads dev; holdout is "
+                        "reported once and a ranker tuned against it is no "
+                        "longer evidence")
+    s.add_argument("--no-intent", dest="no_intent", action="store_true",
+                   help="ablate the intent cue, ranking by confidence alone")
     s.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("study", help="manage opt-in local research exports")

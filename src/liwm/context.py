@@ -19,6 +19,7 @@ from .evidence import age_days
 from .config import ConfigStore
 from .fatigue import profile_maturity
 from .gate import gate_decision
+from .intent import affinity, classify_actions
 from .jsonio import utc_now, write_json_atomic
 from .modes import Signals, mode_profile, resolve_auto
 from .scope import resolve_for_context
@@ -26,7 +27,8 @@ from .taxonomy import decision_impact
 
 __all__ = [
     "build_runtime_context", "plan_context", "write_runtime_context",
-    "DEFAULT_MAX_BELIEFS", "StructuredRanker", "LexicalRanker", "rank_beliefs",
+    "DEFAULT_MAX_BELIEFS", "StructuredRanker", "LexicalRanker", "IntentRanker",
+    "rank_beliefs", "score_beliefs", "select_beliefs",
 ]
 
 SCHEMA_VERSION = "0.4.0"
@@ -55,6 +57,28 @@ class StructuredRanker:
         return conf * impact * scope_score * recency
 
 
+class IntentRanker:
+    """Scores how much a belief bears on what the request is asking for.
+
+    Multiplicative rather than additive: intent compatibility modulates the
+    structured score instead of competing with it, so a belief that matters for
+    this action still has to be believed, and confidence still breaks ties
+    among beliefs that matter equally. An additive term would let a maximally
+    relevant belief LIWM barely believes outrank a certain one.
+    """
+
+    #: How much a perfect intent match multiplies the structured score. Fitted
+    #: on the development split only; see benchmarks/retrieval/README.md.
+    WEIGHT = 6.0
+
+    def __init__(self, actions=()):
+        self.actions = tuple(actions)
+
+    def score(self, belief, domain=None, project_id=None, task_terms=None):
+        # Returns a multiplier, applied by score_beliefs rather than summed.
+        return 1.0 + self.WEIGHT * affinity(belief.get("dimension", ""), self.actions)
+
+
 class LexicalRanker:
     """Transparent substring score; semantic rankers may implement the same method."""
 
@@ -65,20 +89,33 @@ class LexicalRanker:
 
 
 def score_beliefs(eligible_beliefs, domain=None, project_id=None, task_terms=None,
-                  rankers=None):
+                  rankers=None, actions=None, components=None):
     """Score and order the eligible set, returning ``[(belief, score)]``.
 
     The score is returned rather than recomputed by callers, so the number the
     receipt reports is by construction the number that decided the ordering.
+
+    Additive rankers contribute evidence strength; the intent ranker scales the
+    result by how much the belief bears on what was asked. Pass a dict as
+    ``components`` to receive the per-belief breakdown -- no consumer should
+    have to take a single opaque relevance number on faith.
     """
     rankers = list(rankers or (StructuredRanker(), LexicalRanker()))
-    scored = [
-        (belief, round(sum(
-            float(ranker.score(belief, domain=domain, project_id=project_id,
-                               task_terms=task_terms) or 0.0)
-            for ranker in rankers), 6))
-        for belief in eligible_beliefs
-    ]
+    intent = IntentRanker(actions or ())
+    sink = components if components is not None else {}
+    scored = []
+    for belief in eligible_beliefs:
+        parts = {
+            type(ranker).__name__: round(float(
+                ranker.score(belief, domain=domain, project_id=project_id,
+                             task_terms=task_terms) or 0.0), 6)
+            for ranker in rankers
+        }
+        base = sum(parts.values())
+        multiplier = intent.score(belief)
+        parts["IntentRanker"] = round(multiplier, 6)
+        sink[belief["id"]] = parts
+        scored.append((belief, round(base * multiplier, 6)))
     scored.sort(key=lambda row: -row[1])
     return scored
 
@@ -152,6 +189,7 @@ def _build(
     rankers=None,
     gate="auto",
     include=None,
+    use_intent=True,
     receipt=None,
 ):
     """Assemble the compact projection for the current task."""
@@ -255,10 +293,17 @@ def _build(
     resolved = resolve_for_context(beliefs, domain=domain, project_id=project_id,
                                    min_confidence=0.30, exclusions=excluded)
 
+    # use_intent=False is the ablation control: it makes every belief equally
+    # compatible with the request, which is exactly what ranking by confidence
+    # alone assumes.
+    actions = classify_actions(task) if use_intent else ()
+    receipt["intent"] = {"actions": list(actions), "enabled": bool(use_intent)}
     eligible = list(resolved.values())
+    components = {}
     scored = score_beliefs(
         eligible, domain=domain, project_id=project_id,
-        task_terms=task_terms, rankers=rankers,
+        task_terms=task_terms, rankers=rankers, actions=actions,
+        components=components,
     )
     ranked, tied_out = select_beliefs(scored, max_beliefs)
     # The sufficiency loop: an agent that finds the capsule insufficient names
@@ -288,7 +333,7 @@ def _build(
     receipt["selected"] = [
         {"belief_id": b["id"], "dimension": b["dimension"], "scope": b["scope"],
          "scope_key": b.get("scope_key"), "confidence": b["confidence"],
-         "relevance": scores[id(b)]}
+         "relevance": scores[id(b)], "components": components.get(b["id"])}
         for b in ranked
     ]
     selected_ids = {id(b) for b in ranked}

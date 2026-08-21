@@ -26,7 +26,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .evidence import PROVENANCE_TRUST, TRUSTED_PROVENANCE
+from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, TRUSTED_PROVENANCE
 from .jsonio import (
     FileLock,
     lifecycle_lock_path,
@@ -200,6 +200,22 @@ def make_event(
             quarantine_reason = quarantine_reason or (
                 "unknown_dimension:%s (add it to liwm.taxonomy.DIMENSIONS or use an "
                 "open namespace such as preferences.*)" % obs.get("dimension")
+            )
+
+        # Source types are an allowlist for the same reason dimensions are.
+        # An absent source_type means "unstated", and defaulting it to the
+        # weakest class is right. An *unrecognised* one means the caller has a
+        # different idea than LIWM about what kind of evidence this is, and
+        # silently valuing it at the guess ceiling is the worst outcome: a
+        # typo'd `explicit_statement` would be recorded as a 0.15 hunch, the
+        # preference would never take hold, and nothing would say why. An
+        # unknown dimension is loudly quarantined a few lines above; this is
+        # the same failure and gets the same treatment.
+        stated_source = obs.get("source_type")
+        if stated_source is not None and stated_source not in SOURCE_CEILINGS:
+            quarantine_reason = quarantine_reason or (
+                "unknown_source_type:%s (expected one of: %s)"
+                % (stated_source, ", ".join(sorted(SOURCE_CEILINGS)))
             )
 
         obs.setdefault("polarity", "support")
