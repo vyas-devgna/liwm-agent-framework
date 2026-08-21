@@ -32,7 +32,9 @@ and the resolved paths. The registry behind it is
 | Claude Code | `~/.claude/CLAUDE.md` | [`claude-code/bootstrap.md`](claude-code/bootstrap.md) | yes |
 | Codex CLI | `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`) | [`codex/bootstrap.md`](codex/bootstrap.md) | yes |
 | Gemini CLI | `~/.gemini/GEMINI.md` | [`blocks/standalone.md`](blocks/standalone.md) | no |
-| opencode | `~/.config/opencode/AGENTS.md` | [`blocks/standalone.md`](blocks/standalone.md) | no |
+| opencode | `~/.config/opencode/AGENTS.md` | [`generic-agent/bootstrap.md`](generic-agent/bootstrap.md) | yes |
+| Pi coding agent | `~/.pi/agent/AGENTS.md` | [`generic-agent/bootstrap.md`](generic-agent/bootstrap.md) | yes |
+| Google Antigravity | `~/.gemini/config/rules/GEMINI.md` | [`blocks/standalone.md`](blocks/standalone.md) | yes |
 | Windsurf / Cascade | `~/.codeium/windsurf/memories/global_rules.md` | [`blocks/compact.md`](blocks/compact.md) | no |
 | Zed agent | `~/.config/zed/rules` | [`blocks/standalone.md`](blocks/standalone.md) | no |
 | Cursor | *(User Rules live in the settings UI)* | [`blocks/standalone.md`](blocks/standalone.md), pasted | no |

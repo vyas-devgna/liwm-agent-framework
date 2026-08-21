@@ -184,15 +184,23 @@ BUILTIN_HOSTS = (
         config_dir="~/.config/opencode",
         instruction_rel="AGENTS.md",
         project_instruction_files=("AGENTS.md", "CLAUDE.md", "CONTEXT.md"),
+        skills_rel="skills",
         capabilities={
+            "skills": True,
             "plugins": True,
             "subagents": True,
+            "progressive_disclosure": True,
         },
         docs="https://opencode.ai/docs/rules/",
         notes=(
             "Global rules are merged with the project file rather than overridden, "
             "with project rules winning on conflict -- which matches LIWM's own "
-            "precedence rule (explicit project instructions beat the profile)."
+            "precedence rule (explicit project instructions beat the profile). "
+            "Has a real skills mechanism: `tools/probe_host.py opencode` loads a "
+            "LIWM SKILL.md into a throwaway config dir and asserts opencode lists "
+            "it, so this claim is checked rather than read off a docs page. It also "
+            "auto-loads ~/.claude/skills and ~/.agents/skills, so skills installed "
+            "for Claude Code or Codex are picked up with no second copy."
         ),
     ),
     _host(
@@ -251,6 +259,59 @@ BUILTIN_HOSTS = (
         project_instruction_files=("AGENTS.md", ".rules"),
         docs="https://zed.dev/docs/ai/rules",
         notes="Reads AGENTS.md in a project; global rules live in the Zed config dir.",
+        confidence="community",
+    ),
+    _host(
+        id="pi",
+        name="Pi coding agent",
+        vendor="earendil-works",
+        home_env=None,
+        config_dir="~/.pi/agent",
+        instruction_rel="AGENTS.md",
+        project_instruction_files=("AGENTS.override.md", "AGENTS.md", "CLAUDE.md"),
+        skills_rel="skills",
+        capabilities={
+            "skills": True,
+            "progressive_disclosure": True,
+        },
+        docs="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/usage.md",
+        notes=(
+            "Global instructions load from ~/.pi/agent/AGENTS.md, then every parent "
+            "directory, then the current one. Note the override: a directory "
+            "containing AGENTS.override.md has that file read *instead*, so a LIWM "
+            "block installed into a sibling AGENTS.md would be silently skipped "
+            "there. The docs describe per-project skills and a --skill flag; the "
+            "user-level ~/.pi/agent/skills/ directory is undocumented but present "
+            "and populated on a real install, which is why this entry claims it at "
+            "community confidence rather than documented."
+        ),
+        confidence="community",
+    ),
+    _host(
+        id="antigravity",
+        name="Google Antigravity",
+        vendor="Google",
+        home_env=None,
+        config_dir="~/.gemini/config",
+        instruction_rel="rules/GEMINI.md",
+        project_instruction_files=(".agents/rules", ".agent/rules", "AGENTS.md"),
+        skills_rel="skills",
+        instruction_budget_bytes=12000,
+        capabilities={
+            "skills": True,
+            "progressive_disclosure": True,
+        },
+        docs="https://antigravity.google/docs/rules-workflows/",
+        notes=(
+            "The published docs give ~/.gemini/GEMINI.md, which is Gemini CLI's "
+            "file. A real Antigravity install puts its rules in "
+            "~/.gemini/config/rules/GEMINI.md with a sibling skills/ directory, and "
+            "that is what this entry uses -- observed layout over documented "
+            "layout, at community confidence, because the observation is from "
+            "installs rather than a specification. `liwm hosts list` shows the "
+            "resolved paths for your machine; a hosts.json overlay corrects them "
+            "if your build differs. Rules files are capped at 12,000 characters."
+        ),
         confidence="community",
     ),
     _host(

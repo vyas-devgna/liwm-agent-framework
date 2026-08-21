@@ -66,12 +66,66 @@ repository-scoped and should be described as project-intent integration, not a
 global personal profile. “Any AGENTS.md agent” is a manual convention, not a
 product acceptance claim.
 
+## The automatable slice
+
+Most of the protocol above needs a person, a model and a real session. One step
+does not: *"the official skills location is still valid and loaded"* is a claim
+the host can answer itself, offline, with no credentials. It is also the claim
+most likely to rot, because vendors move configuration directories between
+releases and LIWM would go on installing into the old one.
+
+```bash
+python tools/probe_host.py opencode      # one host
+python tools/probe_host.py --all         # everything in the registry
+```
+
+The probe builds a throwaway host configuration, stages one real LIWM
+`SKILL.md` where the registry says skills go, runs the host's own introspection
+command, and reports whether the host found it. It exits non-zero only for a
+host that was actually probed and failed — `not_installed` and
+`no_introspection` are reported as themselves, because "not checkable this way"
+and "checked and fine" are different states and only one of them is evidence.
+
+Passing the probe is **not** acceptance. It establishes that the path is right,
+nothing more: it says nothing about whether the agent consults LIWM during real
+work, which is what the rest of this document is for.
+
+Only `opencode` currently exposes a non-interactive skills listing. Adding a
+host to `INTROSPECTION` in `tools/probe_host.py` is a few lines when one does.
+
 ## Acceptance record
 
-No host acceptance record ships yet. The repository therefore describes its
-current host entries as documented adapters or manual integrations. Add a dated
-record here only after the complete protocol passes; downgrade the claim when a
-later host version fails.
+No *acceptance* record ships yet — no host has passed the full protocol above,
+so the repository still describes its entries as documented adapters or manual
+integrations. Add a dated record here only after the complete protocol passes;
+downgrade the claim when a later host version fails.
+
+### Path probes
+
+These are path checks, not acceptance. Recorded because they changed the
+registry.
+
+| Date | Host | Version | OS | Result |
+|---|---|---|---|---|
+| 2026-08-21 | opencode | 1.18.20 | Linux 7.1.8-arch1-3 | **loaded** — staged `SKILL.md` reported by `opencode debug skill` |
+
+That probe is why the `opencode` entry now claims `skills: True`. It had been
+recorded as having no skills mechanism and was being given the larger
+self-contained block; opencode 1.18 has one, and additionally auto-loads
+`~/.claude/skills` and `~/.agents/skills`, so skills installed for Claude Code
+or Codex are already visible to it.
+
+Two entries were corrected against a real installation rather than a docs page,
+and both are marked `community` confidence for that reason:
+
+- **Antigravity** — the published docs give `~/.gemini/GEMINI.md`, which is
+  Gemini CLI's file. An installed Antigravity keeps rules at
+  `~/.gemini/config/rules/GEMINI.md` with a sibling `skills/` directory.
+- **Pi** — the docs describe per-project skills and a `--skill` flag. A real
+  install also has a populated `~/.pi/agent/skills/`.
+
+Run `liwm hosts list` to see what resolves on your machine, and correct any of
+this with a `hosts.json` overlay in your LIWM home.
 
 Official references should be rechecked on every acceptance run:
 

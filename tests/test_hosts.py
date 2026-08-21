@@ -317,5 +317,53 @@ class TestInstallationPlan(LiwmTestCase):
         self.assertIsNone(installation_plan("no-such-host", home=self.home))
 
 
+
+class TestNewHostEntries(unittest.TestCase):
+    """Entries corrected against real installations rather than docs pages."""
+
+    def test_opencode_claims_skills(self):
+        """Verified by tools/probe_host.py against opencode 1.18.
+
+        The entry said no skills mechanism, so opencode was given the larger
+        self-contained block and none of the fifteen skills. If this ever
+        reverts, the probe result in docs/HOST_ACCEPTANCE.md is stale.
+        """
+        spec = get_host("opencode")
+        self.assertTrue(spec["capabilities"].get("skills"))
+        self.assertEqual(spec["skills_rel"], "skills")
+
+    def test_pi_reads_a_global_agents_file(self):
+        spec = get_host("pi")
+        self.assertTrue(str(instruction_file_for(spec)).endswith(".pi/agent/AGENTS.md"))
+
+    def test_pi_records_the_override_file_ahead_of_agents_md(self):
+        """AGENTS.override.md replaces AGENTS.md rather than adding to it.
+
+        A LIWM block installed into a sibling AGENTS.md is silently skipped in
+        any directory that has an override, so the ordering here is load-bearing
+        documentation, not decoration.
+        """
+        files = get_host("pi")["project_instruction_files"]
+        self.assertEqual(files[0], "AGENTS.override.md")
+        self.assertLess(files.index("AGENTS.override.md"), files.index("AGENTS.md"))
+
+    def test_antigravity_uses_its_observed_layout(self):
+        spec = get_host("antigravity")
+        resolved = str(instruction_file_for(spec))
+        self.assertTrue(resolved.endswith(".gemini/config/rules/GEMINI.md"), resolved)
+        self.assertEqual(spec["instruction_budget_bytes"], 12000)
+
+    def test_entries_taken_from_observation_say_so(self):
+        """Observed layout is weaker evidence than a specification, and is labelled."""
+        for host_id in ("pi", "antigravity"):
+            with self.subTest(host=host_id):
+                self.assertEqual(get_host(host_id)["confidence"], "community")
+
+    def test_every_host_documents_where_it_came_from(self):
+        for host in BUILTIN_HOSTS:
+            with self.subTest(host=host["id"]):
+                self.assertTrue(host["docs"], host["id"])
+                self.assertIn(host["confidence"], ("documented", "community"))
+
 if __name__ == "__main__":
     unittest.main()
