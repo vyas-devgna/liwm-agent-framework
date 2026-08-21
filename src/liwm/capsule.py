@@ -27,6 +27,7 @@ change the answer is removed.
 
 from __future__ import annotations
 
+from .composition import WITHHELD_NOTICE, screen_set, screen_value
 from .taxonomy import DIMENSION_INDEX
 
 __all__ = ["render_capsule", "PRECEDENCE_LINE"]
@@ -63,10 +64,16 @@ def _scope_suffix(item):
     return " @%s%s" % (scope, ":%s" % key if key else "")
 
 
-def _belief_line(item):
+def _belief_line(item, withhold=False):
+    # Screened again here, not only on the way in. A profile written before
+    # the write-time gate existed can still hold one of these, and a rule
+    # enforced only at one end is a rule with an unguarded end.
+    value = str(item.get("value", ""))
+    if withhold or screen_value(value):
+        value = WITHHELD_NOTICE
     return "  %s = %s (%.2f)%s" % (
         _short(item.get("dimension", "")),
-        str(item.get("value", "")),
+        value,
         float(item.get("confidence", 0.0)),
         _scope_suffix(item),
     )
@@ -90,8 +97,18 @@ def render_capsule(context):
 
     applies = context.get("applies") or []
     if applies:
+        # Screened as a set before rendering, for a directive split across
+        # values that are individually unremarkable. Telling the model about
+        # it in prose would be the thing this exists instead of.
+        composed = screen_set([item.get("value") for item in applies])
+        culprits = set(composed.get("culprits") or ())
         out.append("apply:")
-        out.extend(_belief_line(item) for item in applies)
+        out.extend(_belief_line(item, withhold=index in culprits)
+                   for index, item in enumerate(applies))
+        if composed["joined"]:
+            out.append("  (%d value(s) withheld: they compose into an instruction "
+                       "(%s) -- `liwm why` shows them)"
+                       % (len(culprits), ",".join(composed["joined"])))
 
     withheld = int(context.get("beliefs_withheld") or 0)
     if withheld:

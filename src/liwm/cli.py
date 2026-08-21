@@ -1571,7 +1571,7 @@ def cmd_verify(args):
     store = _store(args)
     schema_store = SchemaStore()
     profile = store.load()
-    integrity = store.events.verify()
+    integrity = store.events.verify(deep=getattr(args, "deep", False))
     schema_errors = schema_store.validate(profile, "user")
     state_documents = _validate_state_documents(store.home, schema_store, include_events=True)
     checkpoints = verify_checkpoints(store.home)
@@ -1709,6 +1709,61 @@ def cmd_retro(args):
 
 
 def cmd_eval(args):
+    if args.action == "gate":
+        from .evaluation.gatebench import load_suite, run_gatebench
+        result = run_gatebench(load_suite(args.cases))
+        o = result["overall"]
+        lines = ["zero-memory gate: %s (%d cases)" % (result["suite_id"], o["cases"]),
+                 "accuracy %.3f  95%% CI %s" % (o["accuracy"], o["accuracy_ci95"]),
+                 "false skips     %d/%d  rate %.3f  95%% CI %s   <- the error the "
+                 "user cannot see" % (
+                     o["false_skips"], sum(1 for r in result["rows"] if r["expected"]),
+                     o["false_skip_rate"], o["false_skip_rate_ci95"]),
+                 "false retrieves %d  rate %.3f   <- costs tokens, shows in the receipt"
+                 % (o["false_retrieves"], o["false_retrieve_rate"]),
+                 "weighted loss %.2f (%.3f per case)" % (
+                     o["weighted_loss"], o["weighted_loss_per_case"])]
+        for row in o["failing"]:
+            lines.append("  %-14s %s" % (row["kind"], row["task"]))
+        return _emit(args, result, text="\n".join(lines))
+    if args.action == "poisoning":
+        from .evaluation.poisoning import load_suite, run_poisoning
+        result = run_poisoning(load_suite(args.cases))
+        overall = result["overall"]
+        lines = ["memory poisoning: %s" % result["suite_id"],
+                 "overall attack success %d/%d = %.3f  95%% CI %s" % (
+                     overall["succeeded"], overall["attacks"],
+                     overall["attack_success_rate"], overall["asr_ci95"])]
+        for layer, row in result["layers"].items():
+            lines.append("  %-4s %d/%d succeeded%s" % (
+                layer, row["succeeded"], row["attacks"],
+                ("  " + ", ".join(row["succeeded_ids"])) if row["succeeded_ids"] else ""))
+        controls = result["benign_controls"]
+        lines.append("  benign controls: %d/%d reached the model "
+                     "(false-positive rate %.3f)" % (
+                         controls["reached_model"], controls["controls"],
+                         controls["false_positive_rate"]))
+        lines.append(result["caveat"])
+        return _emit(args, result, text="\n".join(lines))
+    if args.action == "retrieval":
+        from .evaluation.retrieval import SPLITS, load_suite, run_retrieval
+        splits = SPLITS if args.split == "all" else (args.split,)
+        result = run_retrieval(load_suite(args.cases), splits=splits,
+                               use_intent=not args.no_intent)
+        lines = ["retrieval %s (%d/%d cases, intent %s)" % (
+            result["suite_id"], result["manifest"]["cases_scored"],
+            result["manifest"]["cases_total"],
+            "off" if args.no_intent else "on")]
+        lines.append("%-10s %6s %8s %-18s %10s %7s %8s" % (
+            "split", "cases", "recall", "ci95", "precision", "mrr", "tokens"))
+        for name, row in result["splits"].items():
+            if not row:
+                continue
+            lines.append("%-10s %6d %8.3f %-18s %10.3f %7.3f %8.0f" % (
+                name, row["cases"], row["recall"], str(row["recall_ci95"]),
+                row["precision"], row["mrr"], row["mean_tokens"]))
+        lines.append("Recall is retrieval recall, not answer accuracy. No model ran.")
+        return _emit(args, result, text="\n".join(lines))
     if args.action == "contextecon":
         from .evaluation.contextecon import load_scenario, run_contextecon
         result = run_contextecon(load_scenario(args.cases, scenario=args.scenario))
@@ -2290,6 +2345,11 @@ def build_parser():
     s.set_defaults(func=cmd_compact)
 
     s = sub.add_parser("verify", help="verify integrity, schema and materialisation")
+    s.add_argument("--deep", action="store_true",
+                   help="re-hash every archived event individually rather than "
+                        "trusting an archive whose recorded digest still matches. "
+                        "Answers 'was this archive already corrupt when written', "
+                        "which a matching digest cannot")
     s.set_defaults(func=cmd_verify)
 
     s = sub.add_parser("migrate", help="migrate stored data to the current schema")
@@ -2322,7 +2382,9 @@ def build_parser():
     s.set_defaults(func=cmd_retro)
 
     s = sub.add_parser("eval", help="run local evaluation studies")
-    s.add_argument("action", choices=["converge", "modes", "intentbench", "contextecon"])
+    s.add_argument("action",
+                   choices=["converge", "modes", "intentbench", "contextecon",
+                            "retrieval", "poisoning", "gate"])
     s.add_argument("--archetype", default="impatient_technical_expert")
     s.add_argument("--rounds", type=int, default=8)
     s.add_argument("--seed", type=int, default=1337)
@@ -2335,6 +2397,12 @@ def build_parser():
                    default="liwm-projection")
     s.add_argument("--scenario", default="longrunning-v1",
                    help="context-economics scenario id")
+    s.add_argument("--split", choices=["dev", "holdout", "all"], default="dev",
+                   help="retrieval split. Development reads dev; holdout is "
+                        "reported once and a ranker tuned against it is no "
+                        "longer evidence")
+    s.add_argument("--no-intent", dest="no_intent", action="store_true",
+                   help="ablate the intent cue, ranking by confidence alone")
     s.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("study", help="manage opt-in local research exports")

@@ -26,7 +26,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .evidence import PROVENANCE_TRUST, TRUSTED_PROVENANCE
+from .composition import screen_value
+from .evidence import PROVENANCE_TRUST, SOURCE_CEILINGS, TRUSTED_PROVENANCE
 from .jsonio import (
     FileLock,
     lifecycle_lock_path,
@@ -200,6 +201,31 @@ def make_event(
             quarantine_reason = quarantine_reason or (
                 "unknown_dimension:%s (add it to liwm.taxonomy.DIMENSIONS or use an "
                 "open namespace such as preferences.*)" % obs.get("dimension")
+            )
+
+        # Source types are an allowlist for the same reason dimensions are.
+        # An absent source_type means "unstated", and defaulting it to the
+        # weakest class is right. An *unrecognised* one means the caller has a
+        # different idea than LIWM about what kind of evidence this is, and
+        # silently valuing it at the guess ceiling is the worst outcome: a
+        # typo'd `explicit_statement` would be recorded as a 0.15 hunch, the
+        # preference would never take hold, and nothing would say why. An
+        # unknown dimension is loudly quarantined a few lines above; this is
+        # the same failure and gets the same treatment.
+        # A trusted channel says who said it, not what they said. Free text
+        # arriving on it can still be a directive, and a directive is not a
+        # fact about a person -- so it is refused here rather than admitted at
+        # 0.95 and rendered into every capsule from now on.
+        instruction_signals = screen_value(obs.get("value"))
+        if instruction_signals:
+            quarantine_reason = quarantine_reason or (
+                "instruction_shaped_value:%s" % ",".join(instruction_signals))
+
+        stated_source = obs.get("source_type")
+        if stated_source is not None and stated_source not in SOURCE_CEILINGS:
+            quarantine_reason = quarantine_reason or (
+                "unknown_source_type:%s (expected one of: %s)"
+                % (stated_source, ", ".join(sorted(SOURCE_CEILINGS)))
             )
 
         obs.setdefault("polarity", "support")
@@ -529,17 +555,36 @@ class EventStore:
         return events[-n:]
 
     # -- integrity ---------------------------------------------------------
-    def verify(self, _events_locked=False):
-        """Recompute every event hash; return a report of any mismatches."""
+    def verify(self, _events_locked=False, deep=False):
+        """Recompute event hashes; return a report of any mismatches.
+
+        An archive whose recorded SHA-256 still matches the bytes on disk
+        cannot have had a contained event altered -- changing one would change
+        the file digest. So by default a hash-matching archive is taken at its
+        word and its events are not re-parsed and re-hashed individually.
+
+        This is not a weakening of tamper detection; it is the same detection
+        without doing it twice. It matters because ``verify`` runs on the
+        read path, and re-hashing the whole history on every turn made the
+        cost of consulting the profile grow with the length of that history:
+        1.25 s of a 1.25 s context build at 20,000 events, on the one call an
+        agent makes every turn.
+
+        ``deep=True`` re-checks every archived event individually. It is what
+        ``liwm verify --deep`` runs, and it is the right thing when the
+        question is "was this archive already corrupt when it was written",
+        which a matching digest cannot answer.
+        """
         if not _events_locked:
             with FileLock(lifecycle_lock_path(self.home), timeout=30.0):
                 with FileLock(self.lock_path, timeout=30.0):
-                    return self.verify(_events_locked=True)
+                    return self.verify(_events_locked=True, deep=deep)
         self._recover_transaction_locked()
         checked = tampered = unreadable = missing_integrity = 0
         problems = []
         archive_ids = set()
         archive_frontier = 0
+        ranges = []
         try:
             archive_index = self._archive_index()
             for row in archive_index.get("archives") or []:
@@ -551,22 +596,37 @@ class EventStore:
                 if digest != row.get("sha256"):
                     problems.append({"path": str(path), "issue": "archive_hash_mismatch"})
                     continue
-                archive_events = []
-                with gzip.open(path, "rt", encoding="utf-8") as handle:
-                    archive_events = [json.loads(line) for line in handle if line.strip()]
-                if len(archive_events) != int(row.get("event_count") or -1):
-                    problems.append({"path": str(path), "issue": "archive_count_mismatch"})
-                for archived in archive_events:
-                    issue = _integrity_issue(archived)
-                    if issue:
-                        problems.append({"path": str(path), "issue": issue,
-                                         "event_id": archived.get("event_id")})
-                    event_id = archived.get("event_id")
-                    if event_id in archive_ids:
-                        problems.append({"path": str(path), "issue": "duplicate_event_id",
-                                         "event_id": event_id})
-                    archive_ids.add(event_id)
-                archive_frontier = max(archive_frontier, int(row.get("last_sequence") or 0))
+                first = int(row.get("first_sequence") or 0)
+                last = int(row.get("last_sequence") or 0)
+                # Sequence ranges are recorded per archive, so two archives
+                # claiming the same event is a property of the index and needs
+                # no decompression to notice.
+                for other in ranges:
+                    if first <= other[1] and other[0] <= last:
+                        problems.append({"path": str(path),
+                                         "issue": "archive_range_overlap"})
+                        break
+                ranges.append((first, last))
+
+                if deep:
+                    with gzip.open(path, "rt", encoding="utf-8") as handle:
+                        archive_events = [json.loads(line) for line in handle
+                                          if line.strip()]
+                    if len(archive_events) != int(row.get("event_count") or -1):
+                        problems.append({"path": str(path),
+                                         "issue": "archive_count_mismatch"})
+                    for archived in archive_events:
+                        issue = _integrity_issue(archived)
+                        if issue:
+                            problems.append({"path": str(path), "issue": issue,
+                                             "event_id": archived.get("event_id")})
+                        event_id = archived.get("event_id")
+                        if event_id in archive_ids:
+                            problems.append({"path": str(path),
+                                             "issue": "duplicate_event_id",
+                                             "event_id": event_id})
+                        archive_ids.add(event_id)
+                archive_frontier = max(archive_frontier, last)
         except Exception as exc:
             problems.append({"path": str(self.archive_index_path),
                              "issue": "archive_invalid", "detail": str(exc)})

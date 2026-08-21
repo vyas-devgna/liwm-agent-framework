@@ -1,0 +1,68 @@
+{
+  "suite_id": "gate-v1",
+  "description": "Should this request read the profile at all? Labelled by whether stored memory could change what a correct answer looks like. The two errors are not equally bad and the loss says so.",
+  "loss": {
+    "false_skip_weight": 10.0,
+    "false_retrieve_weight": 1.0,
+    "rationale": "A wrong skip degrades the answer silently and costs the user something they cannot see. A wrong retrieve costs a few hundred tokens and appears in the receipt. Treating them as equal errors optimises the wrong thing."
+  },
+  "cases": [
+    {"task": "what is 17% of 340", "needs_memory": false, "family": "arithmetic"},
+    {"task": "what is 2 + 2", "needs_memory": false, "family": "arithmetic"},
+    {"task": "compute 45 * 12 for me", "needs_memory": false, "family": "arithmetic"},
+    {"task": "convert 5 km to miles", "needs_memory": false, "family": "unit_conversion"},
+    {"task": "how many bytes in 4 gb", "needs_memory": false, "family": "unit_conversion"},
+    {"task": "convert 180 celsius to fahrenheit", "needs_memory": false, "family": "unit_conversion"},
+
+    {"task": "what is the capital of France", "needs_memory": false, "family": "general_knowledge"},
+    {"task": "who is Ada Lovelace", "needs_memory": false, "family": "general_knowledge"},
+    {"task": "what is a monad", "needs_memory": false, "family": "general_knowledge"},
+    {"task": "when did Python 3 come out", "needs_memory": false, "family": "general_knowledge"},
+    {"task": "what is the syntax for a python decorator", "needs_memory": false, "family": "general_knowledge"},
+
+    {"task": "base64 encode this string please", "needs_memory": false, "family": "mechanical"},
+    {"task": "give me a sha256 of that literal", "needs_memory": false, "family": "mechanical"},
+    {"task": "url encode the query parameters", "needs_memory": false, "family": "mechanical"},
+
+    {"task": "write the release notes", "needs_memory": true, "family": "subjective_output"},
+    {"task": "draft an email to the team", "needs_memory": true, "family": "subjective_output"},
+    {"task": "name this variable", "needs_memory": true, "family": "subjective_output"},
+    {"task": "summarise what changed in this branch", "needs_memory": true, "family": "subjective_output"},
+
+    {"task": "use the usual package manager", "needs_memory": true, "family": "unresolved_reference"},
+    {"task": "same as last time please", "needs_memory": true, "family": "unresolved_reference"},
+    {"task": "continue where we left off", "needs_memory": true, "family": "unresolved_reference"},
+    {"task": "do that thing again for this module", "needs_memory": true, "family": "unresolved_reference"},
+
+    {"task": "you said earlier that this was fine", "needs_memory": true, "family": "history"},
+    {"task": "when did we add this dependency", "needs_memory": true, "family": "history"},
+    {"task": "we decided against that approach before", "needs_memory": true, "family": "history"},
+
+    {"task": "should I use pnpm or npm", "needs_memory": true, "family": "open_decision"},
+    {"task": "which library is better for this", "needs_memory": true, "family": "open_decision"},
+    {"task": "compare the three options for the cache layer", "needs_memory": true, "family": "open_decision"},
+    {"task": "what are the tradeoffs here", "needs_memory": true, "family": "open_decision"},
+
+    {"task": "refactor this function", "needs_memory": true, "family": "situated_coding"},
+    {"task": "review my approach", "needs_memory": true, "family": "situated_coding"},
+    {"task": "ship this to production", "needs_memory": true, "family": "situated_coding"},
+    {"task": "fix the failing tests", "needs_memory": true, "family": "situated_coding"},
+
+    {"task": "what is wrong with this function", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "what is causing the test to fail", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "what is the best way to structure this module", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "what is the type of this variable", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "who is responsible for this file", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "what is our deploy process", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "how should we handle retries", "needs_memory": true, "family": "generic_looking_but_situated"},
+    {"task": "is this change actually faster", "needs_memory": true, "family": "generic_looking_but_situated"},
+
+    {"task": "make it match the rest of the codebase", "needs_memory": true, "family": "project_relative"},
+    {"task": "follow the conventions we use here", "needs_memory": true, "family": "project_relative"},
+    {"task": "keep it consistent with the other services", "needs_memory": true, "family": "project_relative"},
+
+    {"task": "format this json", "needs_memory": false, "family": "formatting_transform"},
+    {"task": "sort these lines alphabetically", "needs_memory": false, "family": "formatting_transform"},
+    {"task": "pretty print this xml", "needs_memory": false, "family": "formatting_transform"}
+  ]
+}
